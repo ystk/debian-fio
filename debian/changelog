@@ -1,0 +1,82 @@
+fio (1.38-1) unstable; urgency=low
+
+  * New Upstream Version:
+    * Should build on ARMv7 now, thanks Jamie Bennett (Closes: #573027).
+
+ -- Martin Steigerwald <ms@teamix.de>  Wed, 14 Apr 2010 18:23:14 +0200
+
+fio (1.36-1) unstable; urgency=low
+
+  * New upstream version.
+  * Doesn't build on sh4 / sh4a / sh5 at the moment. Fix is being
+    worked on: See debian bug #561891.
+  * Updated Standards-Version to 3.8.4, no changes.
+  * Updated source format to 3.0 (quilt), no changes.
+
+ -- Martin Steigerwald <ms@teamix.de>  Mon, 15 Feb 2010 15:17:22 +0100
+
+fio (1.33.1-2) UNRELEASED; urgency=low
+
+  * Moved over repository to Alioth/CollabMaint.
+  * debian/control: Updated Vcs-Git and Vcs-Browser.
+  * Added debian/gbp.conf with option to always use pristine-tar.
+  * debian/gbp.conf: Added option to call git-dch after import.
+    Since git-buildpackage 0.4.57 git-import-orig doesn't add a
+    changelog entry manually anymore.
+  * Added forgotten pristine-tar delta for fio 1.33.1.
+  * Added tags that I forgot to push. Thanks to Bruno Kleinert for help.
+
+ -- Martin Steigerwald <ms@teamix.de>  Thu, 17 Sep 2009 11:07:00 +0200
+
+fio (1.33.1-1) unstable; urgency=low
+
+  * arch/arch-alpha.h: Removed my FTBFS on alpha bugfix. Applied upstream.
+  * New Upstream Version. (Closes: #545839).
+  * control: Added Vcs-Git and Vcs-Browser.
+  * Updated Standards-Version to 3.8.3.
+
+ -- Martin Steigerwald <ms@teamix.de>  Thu, 10 Sep 2009 11:37:00 +0200
+
+fio (1.32-2) UNRELEASED; urgency=low
+
+  * arch/arch-alpha.h: Correct typo writer_barrier to write_barrier.
+    Thanks, Kurt Roeckx. (Closes: #545839).
+
+ -- Martin Steigerwald <ms@teamix.de>  Thu, 10 Sep 2009 09:30:07 +0200
+
+fio (1.32-1) unstable; urgency=low
+
+  [ Martin Steigerwald ]
+  * New upstream release.
+  * Dropped patch for lintian error in original manpage, fixed
+    upstream.
+  * Dropped manpage for bash shell script fio_generate_plots,
+    upstream integrated it.
+  * Imported to git-buildpackage with pristine tar.
+  * Included examples as documentation.
+  * Fixed watch file to ignore git-latest snapshots.
+
+  [ Michael Prokop ]
+  * fio.1: fix hyphen-used-as-minus-sign
+  * debian/copyright: refer to gpl2 and include its header;
+    updated URLs; some formating changes
+  * debian/rules: drop unnecessary configure target;
+    replace dh_clean with dh_prep; drop templates
+  * Bump Standard-Version to 3.8.2; add myself to Uploaders
+
+  [ Martin Steigerwald ]
+  * debian/copyright: fix copyright unicode char and replaced
+    another (C) with it, thanks Michael.
+
+ -- Martin Steigerwald <ms@teamix.de>  Thu, 13 Aug 2009 08:22:40 +0200
+
+fio (1.26-1) UNRELEASED; urgency=low
+
+  * Initial release (Closes: #524790).
+  * Changed Makefile to build to /usr instead of /usr/local.
+  * Changed Makefile to install the manpage /usr/share/man.
+  * Fixed a lintian reported error in the original manpage.
+  * Created manpage for bash shell script fio_generate_plots.
+
+ -- Martin Steigerwald <ms@teamix.de>  Tue, 19 May 2009 17:12:02 +0200
+
