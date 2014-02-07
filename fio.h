@@ -11,9 +11,10 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#include <getopt.h>
 #include <inttypes.h>
 #include <assert.h>
+
+struct thread_data;
 
 #include "compiler/compiler.h"
 #include "flist.h"
@@ -31,6 +32,13 @@
 #include "helpers.h"
 #include "options.h"
 #include "profile.h"
+#include "time.h"
+#include "gettime.h"
+#include "lib/getopt.h"
+#include "lib/rand.h"
+#include "server.h"
+#include "stat.h"
+#include "flow.h"
 
 #ifdef FIO_HAVE_GUASI
 #include <guasi.h>
@@ -39,14 +47,6 @@
 #ifdef FIO_HAVE_SOLARISAIO
 #include <sys/asynch.h>
 #endif
-
-struct group_run_stats {
-	unsigned long long max_run[2], min_run[2];
-	unsigned long long max_bw[2], min_bw[2];
-	unsigned long long io_kb[2];
-	unsigned long long agg[2];
-	unsigned int kb_base;
-};
 
 /*
  * What type of allocation to use for io buffers
@@ -60,72 +60,22 @@ enum fio_memtype {
 };
 
 /*
- * How many depth levels to log
+ * offset generator types
  */
-#define FIO_IO_U_MAP_NR	8
-#define FIO_IO_U_LAT_U_NR 10
-#define FIO_IO_U_LAT_M_NR 12
+enum {
+	RW_SEQ_SEQ	= 0,
+	RW_SEQ_IDENT,
+};
 
-#define MAX_PATTERN_SIZE 512
-
-struct thread_stat {
-	char *name;
-	char *verror;
-	int error;
-	int groupid;
-	pid_t pid;
-	char *description;
-	int members;
-
-	struct io_log *slat_log;
-	struct io_log *clat_log;
-	struct io_log *bw_log;
-
-	/*
-	 * bandwidth and latency stats
-	 */
-	struct io_stat clat_stat[2];		/* completion latency */
-	struct io_stat slat_stat[2];		/* submission latency */
-	struct io_stat bw_stat[2];		/* bandwidth stats */
-
-	unsigned long long stat_io_bytes[2];
-	struct timeval stat_sample_time[2];
-
-	/*
-	 * fio system usage accounting
-	 */
-	struct rusage ru_start;
-	struct rusage ru_end;
-	unsigned long usr_time;
-	unsigned long sys_time;
-	unsigned long ctx;
-	unsigned long minf, majf;
-
-	/*
-	 * IO depth and latency stats
-	 */
-	unsigned int io_u_map[FIO_IO_U_MAP_NR];
-	unsigned int io_u_submit[FIO_IO_U_MAP_NR];
-	unsigned int io_u_complete[FIO_IO_U_MAP_NR];
-	unsigned int io_u_lat_u[FIO_IO_U_LAT_U_NR];
-	unsigned int io_u_lat_m[FIO_IO_U_LAT_M_NR];
-	unsigned long total_io_u[2];
-	unsigned long short_io_u[2];
-	unsigned long total_submit;
-	unsigned long total_complete;
-
-	unsigned long long io_bytes[2];
-	unsigned long runtime[2];
-	unsigned long total_run_time;
-
-	/*
-	 * IO Error related stats
-	 */
-	unsigned continue_on_error;
-	unsigned long total_err_count;
-	int first_error;
-
-	unsigned int kb_base;
+/*
+ * What type of errors to continue on when continue_on_error is used
+ */
+enum error_type {
+        ERROR_TYPE_NONE = 0,
+        ERROR_TYPE_READ = 1 << 0,
+        ERROR_TYPE_WRITE = 1 << 1,
+        ERROR_TYPE_VERIFY = 1 << 2,
+        ERROR_TYPE_ANY = 0xffff,
 };
 
 struct bssplit {
@@ -142,14 +92,17 @@ struct thread_options {
 	char *opendir;
 	char *ioengine;
 	enum td_ddir td_ddir;
+	unsigned int rw_seq;
 	unsigned int kb_base;
-	unsigned int ddir_nr;
+	unsigned int ddir_seq_nr;
+	long ddir_seq_add;
 	unsigned int iodepth;
 	unsigned int iodepth_low;
 	unsigned int iodepth_batch;
 	unsigned int iodepth_batch_complete;
 
 	unsigned long long size;
+	unsigned int size_percent;
 	unsigned int fill_device;
 	unsigned long long file_size_low;
 	unsigned long long file_size_high;
@@ -172,6 +125,7 @@ struct thread_options {
 	unsigned int create_serialize;
 	unsigned int create_fsync;
 	unsigned int create_on_open;
+	unsigned int create_only;
 	unsigned int end_fsync;
 	unsigned int pre_read;
 	unsigned int sync_io;
@@ -183,14 +137,20 @@ struct thread_options {
 	char verify_pattern[MAX_PATTERN_SIZE];
 	unsigned int verify_pattern_bytes;
 	unsigned int verify_fatal;
+	unsigned int verify_dump;
 	unsigned int verify_async;
+	unsigned long long verify_backlog;
+	unsigned int verify_batch;
 	unsigned int use_thread;
 	unsigned int unlink;
 	unsigned int do_disk_util;
 	unsigned int override_sync;
 	unsigned int rand_repeatable;
+	unsigned int use_os_rand;
 	unsigned int write_lat_log;
 	unsigned int write_bw_log;
+	unsigned int write_iops_log;
+	unsigned int log_avg_msec;
 	unsigned int norandommap;
 	unsigned int softrandommap;
 	unsigned int bs_unaligned;
@@ -203,12 +163,15 @@ struct thread_options {
 	unsigned int thinktime_blocks;
 	unsigned int fsync_blocks;
 	unsigned int fdatasync_blocks;
-	unsigned int start_delay;
+	unsigned int barrier_blocks;
+	unsigned long long start_delay;
 	unsigned long long timeout;
 	unsigned long long ramp_time;
 	unsigned int overwrite;
 	unsigned int bw_avg_time;
+	unsigned int iops_avg_time;
 	unsigned int loops;
+	unsigned long long zone_range;
 	unsigned long long zone_size;
 	unsigned long long zone_skip;
 	enum fio_memtype mem_type;
@@ -228,21 +191,36 @@ struct thread_options {
 	unsigned int file_service_type;
 	unsigned int group_reporting;
 	unsigned int fadvise_hint;
-	unsigned int fallocate;
+	enum fio_fallocate_mode fallocate_mode;
 	unsigned int zero_buffers;
 	unsigned int refill_buffers;
+	unsigned int scramble_buffers;
+	unsigned int compress_percentage;
+	unsigned int compress_chunk;
 	unsigned int time_based;
+	unsigned int disable_lat;
 	unsigned int disable_clat;
 	unsigned int disable_slat;
 	unsigned int disable_bw;
 	unsigned int gtod_reduce;
 	unsigned int gtod_cpu;
 	unsigned int gtod_offload;
+	enum fio_cs clocksource;
+	unsigned int no_stall;
+	unsigned int trim_percentage;
+	unsigned int trim_batch;
+	unsigned int trim_zero;
+	unsigned long long trim_backlog;
+	unsigned int clat_percentiles;
+	unsigned int overwrite_plist;
+	fio_fp64_t percentile_list[FIO_IO_U_LIST_MAX_LEN];
 
 	char *read_iolog_file;
 	char *write_iolog_file;
 	char *bw_log_file;
 	char *lat_log_file;
+	char *iops_log_file;
+	char *replay_redirect;
 
 	/*
 	 * Pre-run and post-run shell
@@ -267,7 +245,7 @@ struct thread_options {
 	/*
 	 * I/O Error handling
 	 */
-	unsigned int continue_on_error;
+	enum error_type continue_on_error;
 
 	/*
 	 * Benchmark profile type
@@ -279,25 +257,48 @@ struct thread_options {
 	 */
 	char *cgroup;
 	unsigned int cgroup_weight;
+	unsigned int cgroup_nodelete;
 
 	unsigned int uid;
 	unsigned int gid;
 
+	int flow_id;
+	int flow;
+	int flow_watermark;
+	unsigned int flow_sleep;
+
+	unsigned long long offset_increment;
+
 	unsigned int sync_file_range;
 };
-
-#define FIO_VERROR_SIZE	128
 
 /*
  * This describes a single thread/process executing a fio job.
  */
 struct thread_data {
 	struct thread_options o;
+	void *eo;
 	char verror[FIO_VERROR_SIZE];
 	pthread_t thread;
 	int thread_number;
 	int groupid;
 	struct thread_stat ts;
+
+	struct io_log *slat_log;
+	struct io_log *clat_log;
+	struct io_log *lat_log;
+	struct io_log *bw_log;
+	struct io_log *iops_log;
+
+	uint64_t stat_io_bytes[2];
+	struct timeval bw_sample_time;
+
+	uint64_t stat_io_blocks[2];
+	struct timeval iops_sample_time;
+
+	struct rusage ru_start;
+	struct rusage ru_end;
+
 	struct fio_file **files;
 	unsigned int files_size;
 	unsigned int files_index;
@@ -307,8 +308,10 @@ struct thread_data {
 	union {
 		unsigned int next_file;
 		os_random_state_t next_file_state;
+		struct frand_state __next_file_state;
 	};
 	int error;
+	int sig;
 	int done;
 	pid_t pid;
 	char *orig_buffer;
@@ -318,6 +321,7 @@ struct thread_data {
 	unsigned int ioprio;
 	unsigned int ioprio_set;
 	unsigned int last_was_sync;
+	enum fio_ddir last_ddir;
 
 	char *mmapfile;
 	int mmapfd;
@@ -327,10 +331,25 @@ struct thread_data {
 
 	char *sysfs_root;
 
-	unsigned long rand_seeds[6];
+	unsigned long rand_seeds[8];
 
-	os_random_state_t bsrange_state;
-	os_random_state_t verify_state;
+	union {
+		os_random_state_t bsrange_state;
+		struct frand_state __bsrange_state;
+	};
+	union {
+		os_random_state_t verify_state;
+		struct frand_state __verify_state;
+	};
+	union {
+		os_random_state_t trim_state;
+		struct frand_state __trim_state;
+	};
+
+	struct frand_state buf_state;
+
+	unsigned int verify_batch;
+	unsigned int trim_batch;
 
 	int shm_id;
 
@@ -341,10 +360,23 @@ struct thread_data {
 	struct ioengine_ops *io_ops;
 
 	/*
-	 * Current IO depth and list of free and busy io_u's.
+	 * Queue depth of io_u's that fio MIGHT do
 	 */
 	unsigned int cur_depth;
+
+	/*
+	 * io_u's about to be committed
+	 */
 	unsigned int io_u_queued;
+
+	/*
+	 * io_u's submitted but not completed yet
+	 */
+	unsigned int io_u_in_flight;
+
+	/*
+	 * List of free and busy io_u's
+	 */
 	struct flist_head io_u_freelist;
 	struct flist_head io_u_busylist;
 	struct flist_head io_u_requeues;
@@ -363,16 +395,18 @@ struct thread_data {
 	/*
 	 * Rate state
 	 */
-	unsigned long rate_nsec_cycle[2];
+	unsigned long long rate_bps[2];
 	long rate_pending_usleep[2];
 	unsigned long rate_bytes[2];
 	unsigned long rate_blocks[2];
 	struct timeval lastrate[2];
 
 	unsigned long long total_io_size;
+	unsigned long long fill_device_size;
 
 	unsigned long io_issues[2];
 	unsigned long long io_blocks[2];
+	unsigned long long this_io_blocks[2];
 	unsigned long long io_bytes[2];
 	unsigned long long io_skip_bytes;
 	unsigned long long this_io_bytes[2];
@@ -382,7 +416,10 @@ struct thread_data {
 	/*
 	 * State for random io, a bitmap of blocks done vs not done
 	 */
-	os_random_state_t random_state;
+	union {
+		os_random_state_t random_state;
+		struct frand_state __random_state;
+	};
 
 	struct timeval start;	/* start of this loop */
 	struct timeval epoch;	/* time job was started */
@@ -395,10 +432,13 @@ struct thread_data {
 	/*
 	 * read/write mixed workload state
 	 */
-	os_random_state_t rwmix_state;
+	union {
+		os_random_state_t rwmix_state;
+		struct frand_state __rwmix_state;
+	};
 	unsigned long rwmix_issues;
 	enum fio_ddir rwmix_ddir;
-	unsigned int ddir_nr;
+	unsigned int ddir_seq_nr;
 
 	/*
 	 * IO history logs for verification. We use a tree for sorting,
@@ -406,11 +446,18 @@ struct thread_data {
 	 */
 	struct rb_root io_hist_tree;
 	struct flist_head io_hist_list;
+	unsigned long io_hist_len;
 
 	/*
 	 * For IO replaying
 	 */
 	struct flist_head io_log_list;
+
+	/*
+	 * For tracking/handling discards
+	 */
+	struct flist_head trim_list;
+	unsigned long trim_entries;
 
 	/*
 	 * for fileservice, how often to switch to a new file
@@ -424,13 +471,18 @@ struct thread_data {
 	/*
 	 * For generating file sizes
 	 */
-	os_random_state_t file_size_state;
+	union {
+		os_random_state_t file_size_state;
+		struct frand_state __file_size_state;
+	};
 
 	/*
 	 * Error counts
 	 */
 	unsigned int total_err_count;
 	int first_error;
+
+	struct fio_flow *flow;
 
 	/*
 	 * Can be overloaded by profiles
@@ -466,21 +518,32 @@ enum {
 #define td_vmsg(td, err, msg, func)	\
 	__td_verror((td), (err), (msg), (func))
 
+#define __fio_stringify_1(x)	#x
+#define __fio_stringify(x)	__fio_stringify_1(x)
+
 extern int exitall_on_terminate;
-extern int thread_number;
-extern int nr_process, nr_thread;
+extern unsigned int thread_number;
+extern unsigned int nr_process, nr_thread;
 extern int shm_id;
 extern int groupid;
 extern int terse_output;
 extern int temp_stall_ts;
 extern unsigned long long mlock_size;
-extern unsigned long page_mask, page_size;
+extern uintptr_t page_mask, page_size;
 extern int read_only;
 extern int eta_print;
 extern unsigned long done_secs;
 extern char *job_section;
 extern int fio_gtod_offload;
 extern int fio_gtod_cpu;
+extern enum fio_cs fio_clock_source;
+extern int warnings_fatal;
+extern int terse_version;
+extern int is_backend;
+extern int nr_clients;
+extern int log_syslog;
+extern const char fio_version_string[];
+extern const fio_fp64_t def_percentile_list[FIO_IO_U_LIST_MAX_LEN];
 
 extern struct thread_data *threads;
 
@@ -489,14 +552,23 @@ static inline void fio_ro_check(struct thread_data *td, struct io_u *io_u)
 	assert(!(io_u->ddir == DDIR_WRITE && !td_write(td)));
 }
 
-#define BLOCKS_PER_MAP		(8 * sizeof(int))
+#define BLOCKS_PER_MAP		(8 * sizeof(unsigned long))
 #define TO_MAP_BLOCK(f, b)	(b)
 #define RAND_MAP_IDX(f, b)	(TO_MAP_BLOCK(f, b) / BLOCKS_PER_MAP)
 #define RAND_MAP_BIT(f, b)	(TO_MAP_BLOCK(f, b) & (BLOCKS_PER_MAP - 1))
 
-#define MAX_JOBS	(1024)
+#define REAL_MAX_JOBS		2048
 
 #define td_non_fatal_error(e)	((e) == EIO || (e) == EILSEQ)
+
+static inline enum error_type td_error_type(enum fio_ddir ddir, int err)
+{
+	if (err == EILSEQ)
+		return ERROR_TYPE_VERIFY;
+	if (ddir == DDIR_READ)
+		return ERROR_TYPE_READ;
+	return ERROR_TYPE_WRITE;
+}
 
 static inline void update_error_count(struct thread_data *td, int err)
 {
@@ -518,39 +590,31 @@ static inline int should_fsync(struct thread_data *td)
 }
 
 /*
- * Time functions
- */
-extern unsigned long long utime_since(struct timeval *, struct timeval *);
-extern unsigned long long utime_since_now(struct timeval *);
-extern unsigned long mtime_since(struct timeval *, struct timeval *);
-extern unsigned long mtime_since_now(struct timeval *);
-extern unsigned long time_since_now(struct timeval *);
-extern unsigned long mtime_since_genesis(void);
-extern void usec_spin(unsigned int);
-extern void usec_sleep(struct thread_data *, unsigned long);
-extern void fill_start_time(struct timeval *);
-extern void fio_gettime(struct timeval *, void *);
-extern void fio_gtod_init(void);
-extern void fio_gtod_update(void);
-extern void set_genesis_time(void);
-extern int ramp_time_over(struct thread_data *);
-extern int in_ramp_time(struct thread_data *);
-
-/*
  * Init/option functions
  */
 extern int __must_check parse_options(int, char **);
+extern int parse_jobs_ini(char *, int, int);
+extern int parse_cmd_line(int, char **);
+extern int fio_backend(void);
+extern void reset_fio_state(void);
+extern void clear_io_state(struct thread_data *);
 extern int fio_options_parse(struct thread_data *, char **, int);
 extern void fio_keywords_init(void);
 extern int fio_cmd_option_parse(struct thread_data *, const char *, char *);
+extern int fio_cmd_ioengine_option_parse(struct thread_data *, const char *, char *);
 extern void fio_fill_default_options(struct thread_data *);
 extern int fio_show_option_help(const char *);
+extern void fio_options_set_ioengine_opts(struct option *long_options, struct thread_data *td);
 extern void fio_options_dup_and_init(struct option *);
-extern void options_mem_dupe(struct thread_data *);
-extern void options_mem_free(struct thread_data *);
+extern void fio_options_mem_dupe(struct thread_data *);
+extern void options_mem_dupe(void *data, struct fio_option *options);
 extern void td_fill_rand_seeds(struct thread_data *);
 extern void add_job_opts(const char **);
-#define FIO_GETOPT_JOB		0x89988998
+extern char *num2str(unsigned long, int, int, int);
+extern int ioengine_load(struct thread_data *);
+
+#define FIO_GETOPT_JOB		0x89000000
+#define FIO_GETOPT_IOENGINE	0x98000000
 #define FIO_NR_OPTIONS		(FIO_MAX_OPTS + 128)
 
 /*
@@ -579,6 +643,8 @@ enum {
 };
 
 extern void td_set_runstate(struct thread_data *, int);
+#define TERMINATE_ALL		(-1)
+extern void fio_terminate_threads(int);
 
 /*
  * Memory helpers
@@ -620,7 +686,7 @@ extern int load_blktrace(struct thread_data *, const char *);
 	if (!(cond)) {			\
 		int *__foo = NULL;	\
 		fprintf(stderr, "file:%s:%d, assert %s failed\n", __FILE__, __LINE__, #cond);	\
-		(td)->runstate = TD_EXITED;	\
+		td_set_runstate((td), TD_EXITED);	\
 		(td)->error = EFAULT;		\
 		*__foo = 0;			\
 	}	\
@@ -633,49 +699,6 @@ static inline int fio_fill_issue_time(struct thread_data *td)
 		return 1;
 
 	return 0;
-}
-
-/*
- * Cheesy number->string conversion, complete with carry rounding error.
- */
-static inline char *num2str(unsigned long num, int maxlen, int base, int pow2)
-{
-	char postfix[] = { ' ', 'K', 'M', 'G', 'P', 'E' };
-	unsigned int thousand;
-	char *buf;
-	int i;
-
-	if (pow2)
-		thousand = 1024;
-	else
-		thousand = 1000;
-
-	buf = malloc(128);
-
-	for (i = 0; base > 1; i++)
-		base /= thousand;
-
-	do {
-		int len, carry = 0;
-
-		len = sprintf(buf, "%'lu", num);
-		if (len <= maxlen) {
-			if (i >= 1) {
-				buf[len] = postfix[i];
-				buf[len + 1] = '\0';
-			}
-			return buf;
-		}
-
-		if ((num % thousand) >= (thousand / 2))
-			carry = 1;
-
-		num /= thousand;
-		num += carry;
-		i++;
-	} while (i <= 5);
-
-	return buf;
 }
 
 static inline int __should_check_rate(struct thread_data *td,
@@ -732,5 +755,8 @@ static inline void td_io_u_free_notify(struct thread_data *td)
 	if (td->o.verify_async)
 		pthread_cond_signal(&td->free_cond);
 }
+
+extern const char *fio_get_arch_string(int);
+extern const char *fio_get_os_string(int);
 
 #endif

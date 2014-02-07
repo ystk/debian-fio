@@ -8,11 +8,14 @@
 #include <assert.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <sys/types.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #include "mutex.h"
 #include "arch/arch.h"
+#include "os/os.h"
 
 #define SMALLOC_REDZONE		/* define to detect memory corruption */
 
@@ -36,7 +39,6 @@ struct pool {
 	unsigned int free_blocks;		/* free blocks */
 	unsigned int nr_blocks;			/* total blocks */
 	unsigned int next_non_full;
-	int fd;					/* memory backing fd */
 	unsigned int mmap_size;
 };
 
@@ -170,19 +172,14 @@ static void clear_blocks(struct pool *pool, unsigned int pool_idx,
 static int find_next_zero(int word, int start)
 {
 	assert(word != -1U);
-	word >>= (start + 1);
-	return ffz(word) + start + 1;
+	word >>= start;
+	return ffz(word) + start;
 }
 
 static int add_pool(struct pool *pool, unsigned int alloc_size)
 {
-	int fd, bitmap_blocks;
-	char file[] = "/tmp/.fio_smalloc.XXXXXX";
+	int bitmap_blocks;
 	void *ptr;
-
-	fd = mkstemp(file);
-	if (fd < 0)
-		goto out_close;
 
 #ifdef SMALLOC_REDZONE
 	alloc_size += sizeof(unsigned int);
@@ -200,12 +197,10 @@ static int add_pool(struct pool *pool, unsigned int alloc_size)
 	pool->nr_blocks = bitmap_blocks;
 	pool->free_blocks = bitmap_blocks * SMALLOC_BPB;
 
-	if (ftruncate(fd, alloc_size) < 0)
-		goto out_unlink;
-
-	ptr = mmap(NULL, alloc_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+	ptr = mmap(NULL, alloc_size, PROT_READ|PROT_WRITE,
+			MAP_SHARED | OS_MAP_ANON, -1, 0);
 	if (ptr == MAP_FAILED)
-		goto out_unlink;
+		goto out_fail;
 
 	memset(ptr, 0, alloc_size);
 	pool->map = ptr;
@@ -213,25 +208,14 @@ static int add_pool(struct pool *pool, unsigned int alloc_size)
 
 	pool->lock = fio_mutex_init(1);
 	if (!pool->lock)
-		goto out_unlink;
-
-	/*
-	 * Unlink pool file now. It wont get deleted until the fd is closed,
-	 * which happens both for cleanup or unexpected quit. This way we
-	 * don't leave temp files around in case of a crash.
-	 */
-	unlink(file);
-	pool->fd = fd;
+		goto out_fail;
 
 	nr_pools++;
 	return 0;
-out_unlink:
+out_fail:
 	fprintf(stderr, "smalloc: failed adding pool\n");
 	if (pool->map)
 		munmap(pool->map, pool->mmap_size);
-	unlink(file);
-out_close:
-	close(fd);
 	return 1;
 }
 
@@ -250,7 +234,6 @@ static void cleanup_pool(struct pool *pool)
 	 * This will also remove the temporary file we used as a backing
 	 * store, it was already unlinked
 	 */
-	close(pool->fd);
 	munmap(pool->map, pool->mmap_size);
 
 	if (pool->lock)
@@ -271,9 +254,9 @@ void scleanup(void)
 #ifdef SMALLOC_REDZONE
 static void *postred_ptr(struct block_hdr *hdr)
 {
-	unsigned long ptr;
+	uintptr_t ptr;
 
-	ptr = (unsigned long) hdr + hdr->size - sizeof(unsigned int);
+	ptr = (uintptr_t) hdr + hdr->size - sizeof(unsigned int);
 	ptr = (ptr + int_mask) & ~int_mask;
 
 	return (void *) ptr;

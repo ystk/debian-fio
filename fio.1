@@ -12,6 +12,11 @@ The typical use of fio is to write a job file matching the I/O load
 one wants to simulate.
 .SH OPTIONS
 .TP
+.BI \-\-debug \fR=\fPtype
+Enable verbose tracing of various fio actions. May be `all' for all types
+or individual types separated by a comma (eg \-\-debug=io,file). `help' will
+list all available tracing options.
+.TP
 .BI \-\-output \fR=\fPfilename
 Write output to \fIfilename\fR.
 .TP
@@ -27,6 +32,21 @@ Generate per-job bandwidth logs.
 .B \-\-minimal
 Print statistics in a terse, semicolon-delimited format.
 .TP
+.B \-\-version
+Display version information and exit.
+.TP
+.BI \-\-terse\-version \fR=\fPversion
+Set terse version output format (Current version 3, or older version 2).
+.TP
+.B \-\-help
+Display usage information and exit.
+.TP
+.BI \-\-cmdhelp \fR=\fPcommand
+Print help information for \fIcommand\fR.  May be `all' for all commands.
+.TP
+.BI \-\-enghelp \fR=\fPioengine[,command]
+List all commands defined by \fIioengine\fR, or print help for \fIcommand\fR defined by \fIioengine\fR.
+.TP
 .BI \-\-showcmd \fR=\fPjobfile
 Convert \fIjobfile\fR to a set of command-line options.
 .TP
@@ -37,22 +57,29 @@ Enable read-only safety checks.
 Specifies when real-time ETA estimate should be printed.  \fIwhen\fR may
 be one of `always', `never' or `auto'.
 .TP
+.BI \-\-readonly
+Turn on safety read-only checks, preventing any attempted write.
+.TP
 .BI \-\-section \fR=\fPsec
-Only run section \fIsec\fR from job file.
+Only run section \fIsec\fR from job file. Multiple of these options can be given, adding more sections to run.
 .TP
-.BI \-\-cmdhelp \fR=\fPcommand
-Print help information for \fIcommand\fR.  May be `all' for all commands.
+.BI \-\-alloc\-size \fR=\fPkb
+Set the internal smalloc pool size to \fIkb\fP kilobytes.
 .TP
-.BI \-\-debug \fR=\fPtype
-Enable verbose tracing of various fio actions. May be `all' for all types
-or individual types seperated by a comma (eg \-\-debug=io,file). `help' will
-list all available tracing options.
+.BI \-\-warnings\-fatal
+All fio parser warnings are fatal, causing fio to exit with an error.
 .TP
-.B \-\-help
-Display usage information and exit.
+.BI \-\-max\-jobs \fR=\fPnr
+Set the maximum allowed number of jobs (threads/processes) to support.
 .TP
-.B \-\-version
-Display version information and exit.
+.BI \-\-server \fR=\fPargs
+Start a backend server, with \fIargs\fP specifying what to listen to. See client/server section.
+.TP
+.BI \-\-daemonize \fR=\fPpidfile
+Background a fio server, writing the pid to the given pid file.
+.TP
+.BI \-\-client \fR=\fPhost
+Instead of running the jobs locally, send and run them on the given host.
 .SH "JOB FILE FORMAT"
 Job files are in `ini' format. They consist of one or more
 job definitions, which begin with a job name in square brackets and
@@ -81,7 +108,11 @@ SI integer: a whole number, possibly containing a suffix denoting the base unit
 of the value.  Accepted suffixes are `k', 'M', 'G', 'T', and 'P', denoting
 kilo (1024), mega (1024^2), giga (1024^3), tera (1024^4), and peta (1024^5)
 respectively. The suffix is not case sensitive. If prefixed with '0x', the
-value is assumed to be base 16 (hexadecimal).
+value is assumed to be base 16 (hexadecimal). A suffix may include a trailing 'b',
+for instance 'kb' is identical to 'k'. You can specify a base 10 value
+by using 'KiB', 'MiB', 'GiB', etc. This is useful for disk drives where
+values are often given in base 10 values. Specifying '30GiB' will get you
+30*1000^3 bytes.
 .TP
 .I bool
 Boolean: a true or false value. `0' denotes false, `1' denotes true.
@@ -92,6 +123,10 @@ Integer range: a range of integers specified in the format
 \fIupper\fR may contain a suffix as described above.  If an option allows two
 sets of ranges, they are separated with a `,' or `/' character. For example:
 `8\-8k/8M\-4G'.
+.TP
+.I float_list
+List of floating numbers: A list of floating numbers, separated by
+a ':' charcater.
 .SS "Parameter List"
 .TP
 .BI name \fR=\fPstr
@@ -110,9 +145,8 @@ than `./'.
 .B fio
 normally makes up a file name based on the job name, thread number, and file
 number. If you want to share files between threads in a job or several jobs,
-specify a \fIfilename\fR for each of them to override the default. If the I/O
-engine used is `net', \fIfilename\fR is the host and port to connect to in the
-format \fIhost\fR/\fIport\fR. If the I/O engine is file-based, you can specify
+specify a \fIfilename\fR for each of them to override the default.
+If the I/O engine is file-based, you can specify
 a number of files by separating the names with a `:' character. `\-' is a
 reserved name, meaning stdin or stdout, depending on the read/write direction
 set.
@@ -161,17 +195,48 @@ Random reads.
 .B randwrite
 Random writes.
 .TP
-.B rw
+.B rw, readwrite
 Mixed sequential reads and writes.
 .TP
 .B randrw 
 Mixed random reads and writes.
 .RE
 .P
-For mixed I/O, the default split is 50/50.  For random I/O, the number of I/Os
-to perform before getting a new offset can be specified by appending
-`:\fIint\fR' to the pattern type.  The default is 1.
+For mixed I/O, the default split is 50/50. For certain types of io the result
+may still be skewed a bit, since the speed may be different. It is possible to
+specify a number of IO's to do before getting a new offset, this is done by
+appending a `:\fI<nr>\fR to the end of the string given. For a random read, it
+would look like \fBrw=randread:8\fR for passing in an offset modifier with a
+value of 8. If the postfix is used with a sequential IO pattern, then the value
+specified will be added to the generated offset for each IO. For instance,
+using \fBrw=write:4k\fR will skip 4k for every write. It turns sequential IO
+into sequential IO with holes. See the \fBrw_sequencer\fR option.
 .RE
+.TP
+.BI rw_sequencer \fR=\fPstr
+If an offset modifier is given by appending a number to the \fBrw=<str>\fR line,
+then this option controls how that number modifies the IO offset being
+generated. Accepted values are:
+.RS
+.RS
+.TP
+.B sequential
+Generate sequential offset
+.TP
+.B identical
+Generate the same offset
+.RE
+.P
+\fBsequential\fR is only useful for random IO, where fio would normally
+generate a new random offset for every IO. If you append eg 8 to randread, you
+would get a new random offset for every 8 IO's. The result would be a seek for
+only every 8 IO's, instead of for every IO. Use \fBrw=randread:8\fR to specify
+that. As sequential IO is already sequential, setting \fBsequential\fR for that
+would not result in any differences.  \fBidentical\fR behaves in a similar
+fashion, except it sends the same offset 8 number of times before generating a
+new offset.
+.RE
+.P
 .TP
 .BI kb_base \fR=\fPint
 The base unit for a kilobyte. The defacto base is 2^10, 1024.  Storage
@@ -182,26 +247,60 @@ reasons. Allow values are 1024 or 1000, with 1024 being the default.
 Seed the random number generator in a predictable way so results are repeatable
 across runs.  Default: true.
 .TP
-.BI fallocate \fR=\fPbool
-By default, fio will use fallocate() to advise the system of the size of the
-file we are going to write. This can be turned off with fallocate=0. May not
-be available on all supported platforms.
+.BI use_os_rand \fR=\fPbool
+Fio can either use the random generator supplied by the OS to generator random
+offsets, or it can use it's own internal generator (based on Tausworthe).
+Default is to use the internal generator, which is often of better quality and
+faster. Default: false.
+.TP
+.BI fallocate \fR=\fPstr
+Whether pre-allocation is performed when laying down files. Accepted values
+are:
+.RS
+.RS
+.TP
+.B none
+Do not pre-allocate space.
+.TP
+.B posix
+Pre-allocate via posix_fallocate().
+.TP
+.B keep
+Pre-allocate via fallocate() with FALLOC_FL_KEEP_SIZE set.
+.TP
+.B 0
+Backward-compatible alias for 'none'.
+.TP
+.B 1
+Backward-compatible alias for 'posix'.
+.RE
+.P
+May not be available on all supported platforms. 'keep' is only
+available on Linux. If using ZFS on Solaris this must be set to 'none'
+because ZFS doesn't support it. Default: 'posix'.
+.RE
 .TP
 .BI fadvise_hint \fR=\fPbool
-Disable use of \fIposix_fadvise\fR\|(2) to advise the kernel what I/O patterns
+Use of \fIposix_fadvise\fR\|(2) to advise the kernel what I/O patterns
 are likely to be issued. Default: true.
 .TP
 .BI size \fR=\fPint
 Total size of I/O for this job.  \fBfio\fR will run until this many bytes have
 been transfered, unless limited by other options (\fBruntime\fR, for instance).
-Unless \fBnr_files\fR and \fBfilesize\fR options are given, this amount will be
-divided between the available files for the job.
+Unless \fBnrfiles\fR and \fBfilesize\fR options are given, this amount will be
+divided between the available files for the job. If not set, fio will use the
+full size of the given files or devices. If the the files do not exist, size
+must be given. It is also possible to give size as a percentage between 1 and
+100. If size=20% is given, fio will use 20% of the full size of the given files
+or devices.
 .TP
-.BI fill_device \fR=\fPbool
+.BI fill_device \fR=\fPbool "\fR,\fB fill_fs" \fR=\fPbool
 Sets size to something really large and waits for ENOSPC (no space left on
 device) as the terminating condition. Only makes sense with sequential write.
 For a read workload, the mount point will be filled first then IO started on
-the result.
+the result. This option doesn't make sense if operating on a raw device node,
+since the size of that is already known by the file system. Additionally,
+writing beyond end-of-device will not return ENOSPC there.
 .TP
 .BI filesize \fR=\fPirange
 Individual file sizes. May be a range, in which case \fBfio\fR will select sizes
@@ -211,14 +310,14 @@ same size.
 .TP
 .BI blocksize \fR=\fPint[,int] "\fR,\fB bs" \fR=\fPint[,int]
 Block size for I/O units.  Default: 4k.  Values for reads and writes can be
-specified seperately in the format \fIread\fR,\fIwrite\fR, either of
+specified separately in the format \fIread\fR,\fIwrite\fR, either of
 which may be empty to leave that value at its default.
 .TP
 .BI blocksize_range \fR=\fPirange[,irange] "\fR,\fB bsrange" \fR=\fPirange[,irange]
 Specify a range of I/O block sizes.  The issued I/O unit will always be a
 multiple of the minimum size, unless \fBblocksize_unaligned\fR is set.  Applies
 to both reads and writes if only one range is given, but can be specified
-seperately with a comma seperating the values. Example: bsrange=1k-4k,2k-8k.
+separately with a comma seperating the values. Example: bsrange=1k-4k,2k-8k.
 Also (see \fBblocksize\fR).
 .TP
 .BI bssplit \fR=\fPstr
@@ -226,7 +325,7 @@ This option allows even finer grained control of the block sizes issued,
 not just even splits between them. With this option, you can weight various
 block sizes for exact control of the issued IO for a job that has mixed
 block sizes. The format of the option is bssplit=blocksize/percentage,
-optionally adding as many definitions as needed seperated by a colon.
+optionally adding as many definitions as needed separated by a colon.
 Example: bssplit=4k/10:64k/50:32k/40 would issue 50% 64k blocks, 10% 4k
 blocks and 40% 32k blocks. \fBbssplit\fR also supports giving separate
 splits to reads and writes. The format is identical to what the
@@ -252,6 +351,27 @@ If this option is given, fio will refill the IO buffers on every submit. The
 default is to only fill it at init time and reuse that data. Only makes sense
 if zero_buffers isn't specified, naturally. If data verification is enabled,
 refill_buffers is also automatically enabled.
+.TP
+.BI scramble_buffers \fR=\fPbool
+If \fBrefill_buffers\fR is too costly and the target is using data
+deduplication, then setting this option will slightly modify the IO buffer
+contents to defeat normal de-dupe attempts. This is not enough to defeat
+more clever block compression attempts, but it will stop naive dedupe
+of blocks. Default: true.
+.TP
+.BI buffer_compress_percentage \fR=\fPint
+If this is set, then fio will attempt to provide IO buffer content (on WRITEs)
+that compress to the specified level. Fio does this by providing a mix of
+random data and zeroes. Note that this is per block size unit, for file/disk
+wide compression level that matches this setting, you'll also want to set
+\fBrefill_buffers\fR.
+.TP
+.BI buffer_compress_chunk \fR=\fPint
+See \fBbuffer_compress_percentage\fR. This setting allows fio to manage how
+big the ranges of random data and zeroed data is. Without this set, fio will
+provide \fBbuffer_compress_percentage\fR of blocksize random data, followed by
+the remaining zeroed. With this set to some chunk size smaller than the block
+size, fio can alternate random and zeroed data throughout the IO buffer.
 .TP
 .BI nrfiles \fR=\fPint
 Number of files to use for this job.  Default: 1.
@@ -294,10 +414,16 @@ Basic \fIreadv\fR\|(2) or \fIwritev\fR\|(2) I/O. Will emulate queuing by
 coalescing adjacents IOs into a single submission.
 .TP
 .B libaio
-Linux native asynchronous I/O.
+Linux native asynchronous I/O. This ioengine defines engine specific options.
 .TP
 .B posixaio
-glibc POSIX asynchronous I/O using \fIaio_read\fR\|(3) and \fIaio_write\fR\|(3).
+POSIX asynchronous I/O using \fIaio_read\fR\|(3) and \fIaio_write\fR\|(3).
+.TP
+.B solarisaio
+Solaris native asynchronous I/O.
+.TP
+.B windowsaio
+Windows native asynchronous I/O.
 .TP
 .B mmap
 File is memory mapped with \fImmap\fR\|(2) and data copied using
@@ -320,13 +446,14 @@ Doesn't transfer any data, just pretends to.  Mainly used to exercise \fBfio\fR
 itself and for debugging and testing purposes.
 .TP
 .B net
-Transfer over the network.  \fBfilename\fR must be set appropriately to
-`\fIhost\fR/\fIport\fR' regardless of data direction.  If receiving, only the
-\fIport\fR argument is used.
+Transfer over the network.  The protocol to be used can be defined with the
+\fBprotocol\fR parameter.  Depending on the protocol, \fBfilename\fR,
+\fBhostname\fR, \fBport\fR, or \fBlisten\fR must be specified.
+This ioengine defines engine specific options.
 .TP
 .B netsplice
 Like \fBnet\fR, but uses \fIsplice\fR\|(2) and \fIvmsplice\fR\|(2) to map data
-and send/receive.
+and send/receive. This ioengine defines engine specific options.
 .TP
 .B cpuio
 Doesn't transfer any data, but burns CPU cycles according to \fBcpuload\fR and
@@ -338,6 +465,10 @@ approach to asycnronous I/O.
 .br
 See <http://www.xmailserver.org/guasi\-lib.html>.
 .TP
+.B rdma
+The RDMA I/O engine supports both RDMA memory semantics (RDMA_WRITE/RDMA_READ)
+and channel semantics (Send/Recv) for the InfiniBand, RoCE and iWARP protocols.
+.TP
 .B external
 Loads an external I/O engine object file.  Append the engine filename as
 `:\fIenginepath\fR'.
@@ -345,7 +476,13 @@ Loads an external I/O engine object file.  Append the engine filename as
 .RE
 .TP
 .BI iodepth \fR=\fPint
-Number of I/O units to keep in flight against the file.  Default: 1.
+Number of I/O units to keep in flight against the file. Note that increasing
+iodepth beyond 1 will not affect synchronous ioengines (except for small
+degress when verify_async is in use). Even async engines my impose OS
+restrictions causing the desired depth not to be achieved.  This may happen on
+Linux when using libaio and not setting \fBdirect\fR=1, since buffered IO is
+not async on that OS. Keep an eye on the IO depth distribution in the
+fio output to verify that the achieved depth is as expected. Default: 1.
 .TP
 .BI iodepth_batch \fR=\fPint
 Number of I/Os to submit at once.  Default: \fBiodepth\fR.
@@ -371,6 +508,13 @@ Default: true.
 .TP
 .BI offset \fR=\fPint
 Offset in the file to start I/O. Data before the offset will not be touched.
+.TP
+.BI offset_increment \fR=\fPint
+If this is provided, then the real offset becomes the
+offset + offset_increment * thread_number, where the thread number is a counter
+that starts at 0 and is incremented for each job. This option is useful if
+there are several jobs which are intended to operate on a file in parallel in
+disjoint segments, with even spacing between the starting points.
 .TP
 .BI fsync \fR=\fPint
 How many I/Os to perform before issuing an \fBfsync\fR\|(2) of dirty data.  If
@@ -411,10 +555,6 @@ Sync file contents when job exits.  Default: false.
 If true, sync file contents on close.  This differs from \fBend_fsync\fR in that
 it will happen on every close, not just at the end of the job.  Default: false.
 .TP
-.BI rwmixcycle \fR=\fPint
-How many milliseconds before switching between reads and writes for a mixed
-workload. Default: 500ms.
-.TP
 .BI rwmixread \fR=\fPint
 Percentage of a mixed workload that should be reads. Default: 50.
 .TP
@@ -430,7 +570,7 @@ Normally \fBfio\fR will cover every block of the file when doing random I/O. If
 this parameter is given, a new offset will be chosen without looking at past
 I/O history.  This parameter is mutually exclusive with \fBverify\fR.
 .TP
-.B softrandommap
+.BI softrandommap \fR=\fPbool
 See \fBnorandommap\fR. If fio runs with the random block map enabled and it
 fails to allocate the map, if this option is set it will continue without a
 random block map. As coverage will not be as complete as with random maps, this
@@ -548,7 +688,7 @@ number, eg echoing 8 will ensure that the OS has 8 huge pages ready for
 use.
 .RE
 .TP
-.BI iomem_align \fR=\fPint
+.BI iomem_align \fR=\fPint "\fR,\fP mem_align" \fR=\fPint
 This indiciates the memory alignment of the IO memory buffers. Note that the
 given alignment is applied to the first IO unit buffer, if using \fBiodepth\fR
 the alignment of the following buffers are given by the \fBbs\fR used. In
@@ -568,6 +708,10 @@ Terminate all jobs when one finishes.  Default: wait for each job to finish.
 Average bandwidth calculations over the given time in milliseconds.  Default:
 500ms.
 .TP
+.BI iopsavgtime \fR=\fPint
+Average IOPS calculations over the given time in milliseconds.  Default:
+500ms.
+.TP
 .BI create_serialize \fR=\fPbool
 If true, serialize file creation for the jobs.  Default: true.
 .TP
@@ -576,6 +720,11 @@ If true, serialize file creation for the jobs.  Default: true.
 .TP
 .BI create_on_open \fR=\fPbool
 If true, the files are not created until they are opened for IO by the job.
+.TP
+.BI create_only \fR=\fPbool
+If true, fio will only run the setup phase of the job. If files need to be
+laid out or updated on disk, only that will be done. The actual job contents
+are not executed.
 .TP
 .BI pre_read \fR=\fPbool
 If this is given, files will be pre-read into memory before starting the given
@@ -602,17 +751,13 @@ values are:
 .RS
 .TP
 .B md5 crc16 crc32 crc32c crc32c-intel crc64 crc7 sha256 sha512 sha1
-Store appropriate checksum in the header of each block.
+Store appropriate checksum in the header of each block. crc32c-intel is
+hardware accelerated SSE4.2 driven, falls back to regular crc32c if
+not supported by the system.
 .TP
 .B meta
 Write extra information about each I/O (timestamp, block number, etc.). The
-block number is verified.
-.TP
-.B pattern
-Fill I/O buffers with a specific pattern that is used to verify. If the pattern
-is < 4bytes, it can either be a decimal or a hexadecimal number. If the pattern
-is > 4bytes, currently, it can only be a hexadecimal pattern starting with
-either "0x" or "0X".
+block number is verified. See \fBverify_pattern\fR as well.
 .TP
 .B null
 Pretend to verify.  Used for testing internals.
@@ -637,9 +782,23 @@ writing.  It is swapped back before verifying.
 Write the verification header for this number of bytes, which should divide
 \fBblocksize\fR.  Default: \fBblocksize\fR.
 .TP
+.BI verify_pattern \fR=\fPstr
+If set, fio will fill the io buffers with this pattern. Fio defaults to filling
+with totally random bytes, but sometimes it's interesting to fill with a known
+pattern for io verification purposes. Depending on the width of the pattern,
+fio will fill 1/2/3/4 bytes of the buffer at the time(it can be either a
+decimal or a hex number). The verify_pattern if larger than a 32-bit quantity
+has to be a hex number that starts with either "0x" or "0X". Use with
+\fBverify\fP=meta.
+.TP
 .BI verify_fatal \fR=\fPbool
 If true, exit the job on the first observed verification failure.  Default:
 false.
+.TP
+.BI verify_dump \fR=\fPbool
+If set, dump the contents of both the original data block and the data block we
+read off disk to files. This allows later analysis to inspect just what kind of
+data corruption occurred. Off by default.
 .TP
 .BI verify_async \fR=\fPint
 Fio will normally verify IO inline from the submitting thread. This option
@@ -653,8 +812,25 @@ allows them to have IO in flight while verifies are running.
 Tell fio to set the given CPU affinity on the async IO verification threads.
 See \fBcpus_allowed\fP for the format used.
 .TP
-.B stonewall
-Wait for preceeding jobs in the job file to exit before starting this one.
+.BI verify_backlog \fR=\fPint
+Fio will normally verify the written contents of a job that utilizes verify
+once that job has completed. In other words, everything is written then
+everything is read back and verified. You may want to verify continually
+instead for a variety of reasons. Fio stores the meta data associated with an
+IO block in memory, so for large verify workloads, quite a bit of memory would
+be used up holding this meta data. If this option is enabled, fio will write
+only N blocks before verifying these blocks.
+.TP
+.BI verify_backlog_batch \fR=\fPint
+Control how many blocks fio will verify if verify_backlog is set. If not set,
+will default to the value of \fBverify_backlog\fR (meaning the entire queue is
+read back and verified).  If \fBverify_backlog_batch\fR is less than 
+\fBverify_backlog\fR then not all blocks will be verified,  if 
+\fBverify_backlog_batch\fR is larger than \fBverify_backlog\fR,  some blocks
+will be verified more than once.
+.TP
+.B stonewall "\fR,\fP wait_for_previous"
+Wait for preceding jobs in the job file to exit before starting this one.
 \fBstonewall\fR implies \fBnew_group\fR.
 .TP
 .B new_group
@@ -681,35 +857,64 @@ Skip the specified number of bytes when \fBzonesize\fR bytes of data have been
 read.
 .TP
 .BI write_iolog \fR=\fPstr
-Write the issued I/O patterns to the specified file.
+Write the issued I/O patterns to the specified file.  Specify a separate file
+for each job, otherwise the iologs will be interspersed and the file may be
+corrupt.
 .TP
 .BI read_iolog \fR=\fPstr
 Replay the I/O patterns contained in the specified file generated by
 \fBwrite_iolog\fR, or may be a \fBblktrace\fR binary file.
 .TP
-.B write_bw_log \fR=\fPstr
+.BI replay_no_stall \fR=\fPint
+While replaying I/O patterns using \fBread_iolog\fR the default behavior
+attempts to respect timing information between I/Os.  Enabling
+\fBreplay_no_stall\fR causes I/Os to be replayed as fast as possible while
+still respecting ordering.
+.TP
+.BI replay_redirect \fR=\fPstr
+While replaying I/O patterns using \fBread_iolog\fR the default behavior
+is to replay the IOPS onto the major/minor device that each IOP was recorded
+from.  Setting \fBreplay_redirect\fR causes all IOPS to be replayed onto the
+single specified device regardless of the device it was recorded from.
+.TP
+.BI write_bw_log \fR=\fPstr
 If given, write a bandwidth log of the jobs in this job file. Can be used to
 store data of the bandwidth of the jobs in their lifetime. The included
 fio_generate_plots script uses gnuplot to turn these text files into nice
 graphs. See \fBwrite_log_log\fR for behaviour of given filename. For this
 option, the postfix is _bw.log.
 .TP
-.B write_lat_log
+.BI write_lat_log \fR=\fPstr
 Same as \fBwrite_bw_log\fR, but writes I/O completion latencies.  If no
 filename is given with this option, the default filename of "jobname_type.log"
 is used. Even if the filename is given, fio will still append the type of log.
 .TP
-.B disable_clat \fR=\fPbool
-Disable measurements of completion latency numbers. Useful only for cutting
+.BI write_iops_log \fR=\fPstr
+Same as \fBwrite_bw_log\fR, but writes IOPS. If no filename is given with this
+option, the default filename of "jobname_type.log" is used. Even if the
+filename is given, fio will still append the type of log.
+.TP
+.BI log_avg_msec \fR=\fPint
+By default, fio will log an entry in the iops, latency, or bw log for every
+IO that completes. When writing to the disk log, that can quickly grow to a
+very large size. Setting this option makes fio average the each log entry
+over the specified period of time, reducing the resolution of the log.
+Defaults to 0.
+.TP
+.BI disable_lat \fR=\fPbool
+Disable measurements of total latency numbers. Useful only for cutting
 back the number of calls to gettimeofday, as that does impact performance at
 really high IOPS rates.  Note that to really get rid of a large amount of these
 calls, this option must be used with disable_slat and disable_bw as well.
 .TP
-.B disable_slat \fR=\fPbool
-Disable measurements of submission latency numbers. See \fBdisable_clat\fR.
+.BI disable_clat \fR=\fPbool
+Disable measurements of completion latency numbers. See \fBdisable_lat\fR.
 .TP
-.B disable_bw_measurement \fR=\fPbool
-Disable measurements of throughput/bandwidth numbers. See \fBdisable_clat\fR.
+.BI disable_slat \fR=\fPbool
+Disable measurements of submission latency numbers. See \fBdisable_lat\fR.
+.TP
+.BI disable_bw_measurement \fR=\fPbool
+Disable measurements of throughput/bandwidth numbers. See \fBdisable_lat\fR.
 .TP
 .BI lockmem \fR=\fPint
 Pin the specified amount of memory with \fBmlock\fR\|(2).  Can be used to
@@ -756,11 +961,17 @@ Add job to this control group. If it doesn't exist, it will be created.
 The system must have a mounted cgroup blkio mount point for this to work. If
 your system doesn't have it mounted, you can do so with:
 
-# mount -t cgroup -o blkio none /cgroup
+# mount \-t cgroup \-o blkio none /cgroup
 .TP
 .BI cgroup_weight \fR=\fPint
 Set the weight of the cgroup to this value. See the documentation that comes
 with the kernel, allowed values are in the range of 100..1000.
+.TP
+.BI cgroup_nodelete \fR=\fPbool
+Normally fio will delete the cgroups it has created after the job completion.
+To override this behavior and to leave cgroups around after the job completion,
+set cgroup_nodelete=1. This can be useful if one wants to inspect various
+cgroup files after job completion. Default: false
 .TP
 .BI uid \fR=\fPint
 Instead of running as the invoking user, set the user ID to this value before
@@ -768,6 +979,84 @@ the thread/process does any work.
 .TP
 .BI gid \fR=\fPint
 Set group ID, see \fBuid\fR.
+.TP
+.BI flow_id \fR=\fPint
+The ID of the flow. If not specified, it defaults to being a global flow. See
+\fBflow\fR.
+.TP
+.BI flow \fR=\fPint
+Weight in token-based flow control. If this value is used, then there is a
+\fBflow counter\fR which is used to regulate the proportion of activity between
+two or more jobs. fio attempts to keep this flow counter near zero. The
+\fBflow\fR parameter stands for how much should be added or subtracted to the
+flow counter on each iteration of the main I/O loop. That is, if one job has
+\fBflow=8\fR and another job has \fBflow=-1\fR, then there will be a roughly
+1:8 ratio in how much one runs vs the other.
+.TP
+.BI flow_watermark \fR=\fPint
+The maximum value that the absolute value of the flow counter is allowed to
+reach before the job must wait for a lower value of the counter.
+.TP
+.BI flow_sleep \fR=\fPint
+The period of time, in microseconds, to wait after the flow watermark has been
+exceeded before retrying operations
+.TP
+.BI clat_percentiles \fR=\fPbool
+Enable the reporting of percentiles of completion latencies.
+.TP
+.BI percentile_list \fR=\fPfloat_list
+Overwrite the default list of percentiles for completion
+latencies. Each number is a floating number in the range (0,100], and
+the maximum length of the list is 20. Use ':' to separate the
+numbers. For example, \-\-percentile_list=99.5:99.9 will cause fio to
+report the values of completion latency below which 99.5% and 99.9% of
+the observed latencies fell, respectively.
+.SS "Ioengine Parameters List"
+Some parameters are only valid when a specific ioengine is in use. These are
+used identically to normal parameters, with the caveat that when used on the
+command line, the must come after the ioengine that defines them is selected.
+.TP
+.BI (libaio)userspace_reap
+Normally, with the libaio engine in use, fio will use
+the io_getevents system call to reap newly returned events.
+With this flag turned on, the AIO ring will be read directly
+from user-space to reap events. The reaping mode is only
+enabled when polling for a minimum of 0 events (eg when
+iodepth_batch_complete=0).
+.TP
+.BI (net,netsplice)hostname \fR=\fPstr
+The host name or IP address to use for TCP or UDP based IO.
+If the job is a TCP listener or UDP reader, the hostname is not
+used and must be omitted.
+.TP
+.BI (net,netsplice)port \fR=\fPint
+The TCP or UDP port to bind to or connect to.
+.TP
+.BI (net,netsplice)protocol \fR=\fPstr "\fR,\fP proto" \fR=\fPstr
+The network protocol to use. Accepted values are:
+.RS
+.RS
+.TP
+.B tcp
+Transmission control protocol
+.TP
+.B udp
+Unreliable datagram protocol
+.TP
+.B unix
+UNIX domain socket
+.RE
+.P
+When the protocol is TCP or UDP, the port must also be given,
+as well as the hostname if the job is a TCP listener or UDP
+reader. For unix sockets, the normal filename option should be
+used and the port is invalid.
+.RE
+.TP
+.BI (net,netsplice)listen
+For TCP network connections, tell fio to listen for incoming
+connections rather than initiating an outgoing connection. The
+hostname must be omitted if this option is used.
 .SH OUTPUT
 While running, \fBfio\fR will display the status of the created jobs.  For
 example:
@@ -915,22 +1204,38 @@ Total time spent in the disk queue.
 Disk utilization.
 .RE
 .PD
+.P
+It is also possible to get fio to dump the current output while it is
+running, without terminating the job. To do that, send fio the \fBUSR1\fR
+signal.
 .SH TERSE OUTPUT
 If the \fB\-\-minimal\fR option is given, the results will be printed in a
-semicolon-delimited format suitable for scripted use.  The fields are:
+semicolon-delimited format suitable for scripted use - a job description
+(if provided) follows on a new line.  Note that the first
+number in the line is the version number. If the output has to be changed
+for some reason, this number will be incremented by 1 to signify that
+change.  The fields are:
 .P
 .RS
-.B jobname, groupid, error
+.B terse version, fio version, jobname, groupid, error
 .P
 Read status:
 .RS
-.B KB I/O, bandwidth \fR(KB/s)\fP, runtime \fR(ms)\fP
+.B Total I/O \fR(KB)\fP, bandwidth \fR(KB/s)\fP, IOPS, runtime \fR(ms)\fP
 .P
 Submission latency:
 .RS
 .B min, max, mean, standard deviation
 .RE
 Completion latency:
+.RS
+.B min, max, mean, standard deviation
+.RE
+Completion latency percentiles (20 fields):
+.RS
+.B Xth percentile=usec
+.RE
+Total latency:
 .RS
 .B min, max, mean, standard deviation
 .RE
@@ -942,13 +1247,21 @@ Bandwidth:
 .P
 Write status:
 .RS
-.B KB I/O, bandwidth \fR(KB/s)\fP, runtime \fR(ms)\fP
+.B Total I/O \fR(KB)\fP, bandwidth \fR(KB/s)\fP, IOPS, runtime \fR(ms)\fP
 .P
 Submission latency:
 .RS
 .B min, max, mean, standard deviation
 .RE
 Completion latency:
+.RS
+.B min, max, mean, standard deviation
+.RE
+Completion latency percentiles (20 fields):
+.RS
+.B Xth percentile=usec
+.RE
+Total latency:
 .RS
 .B min, max, mean, standard deviation
 .RE
@@ -968,16 +1281,88 @@ IO depth distribution:
 .B <=1, 2, 4, 8, 16, 32, >=64
 .RE
 .P
-IO latency distribution (ms):
+IO latency distribution:
 .RS
-.B <=2, 4, 10, 20, 50, 100, 250, 500, 750, 1000, >=2000
+Microseconds:
+.RS
+.B <=2, 4, 10, 20, 50, 100, 250, 500, 750, 1000
+.RE
+Milliseconds:
+.RS
+.B <=2, 4, 10, 20, 50, 100, 250, 500, 750, 1000, 2000, >=2000
+.RE
 .RE
 .P
-.B text description
+Disk utilization (1 for each disk used):
+.RS
+.B name, read ios, write ios, read merges, write merges, read ticks, write ticks, read in-queue time, write in-queue time, disk utilization percentage
 .RE
+.P
+Error Info (dependent on continue_on_error, default off):
+.RS
+.B total # errors, first error code 
+.RE
+.P
+.B text description (if provided in config - appears on newline)
+.RE
+.SH CLIENT / SERVER
+Normally you would run fio as a stand-alone application on the machine
+where the IO workload should be generated. However, it is also possible to
+run the frontend and backend of fio separately. This makes it possible to
+have a fio server running on the machine(s) where the IO workload should
+be running, while controlling it from another machine.
+
+To start the server, you would do:
+
+\fBfio \-\-server=args\fR
+
+on that machine, where args defines what fio listens to. The arguments
+are of the form 'type:hostname or IP:port'. 'type' is either 'ip' (or ip4)
+for TCP/IP v4, 'ip6' for TCP/IP v6, or 'sock' for a local unix domain
+socket. 'hostname' is either a hostname or IP address, and 'port' is the port to
+listen to (only valid for TCP/IP, not a local socket). Some examples:
+
+1) fio \-\-server
+
+   Start a fio server, listening on all interfaces on the default port (8765).
+
+2) fio \-\-server=ip:hostname,4444
+
+   Start a fio server, listening on IP belonging to hostname and on port 4444.
+
+3) fio \-\-server=ip6:::1,4444
+
+   Start a fio server, listening on IPv6 localhost ::1 and on port 4444.
+
+4) fio \-\-server=,4444
+
+   Start a fio server, listening on all interfaces on port 4444.
+
+5) fio \-\-server=1.2.3.4
+
+   Start a fio server, listening on IP 1.2.3.4 on the default port.
+
+6) fio \-\-server=sock:/tmp/fio.sock
+
+   Start a fio server, listening on the local socket /tmp/fio.sock.
+
+When a server is running, you can connect to it from a client. The client
+is run with:
+
+fio \-\-local-args \-\-client=server \-\-remote-args <job file(s)>
+
+where \-\-local-args are arguments that are local to the client where it is
+running, 'server' is the connect string, and \-\-remote-args and <job file(s)>
+are sent to the server. The 'server' string follows the same format as it
+does on the server side, to allow IP/hostname/socket and port strings.
+You can connect to multiple clients as well, to do that you could run:
+
+fio \-\-client=server2 \-\-client=server2 <job file(s)>
 .SH AUTHORS
+
 .B fio
-was written by Jens Axboe <jens.axboe@oracle.com>.
+was written by Jens Axboe <jens.axboe@oracle.com>,
+now Jens Axboe <jaxboe@fusionio.com>.
 .br
 This man page was written by Aaron Carroll <aaronc@cse.unsw.edu.au> based
 on documentation by Jens Axboe.

@@ -1,7 +1,10 @@
 #ifndef FIO_FILE_H
 #define FIO_FILE_H
 
+#include <string.h>
+#include "compiler/compiler.h"
 #include "io_ddir.h"
+#include "flist.h"
 
 /*
  * The type of object we are working on
@@ -40,6 +43,16 @@ enum {
 };
 
 /*
+ * No pre-allocation when laying down files, or call posix_fallocate(), or
+ * call fallocate() with FALLOC_FL_KEEP_SIZE set.
+ */
+enum fio_fallocate_mode {
+	FIO_FALLOCATE_NONE	= 1,
+	FIO_FALLOCATE_POSIX	= 2,
+	FIO_FALLOCATE_KEEP_SIZE	= 3,
+};
+
+/*
  * Each thread_data structure has a number of files associated with it,
  * this structure holds state information for a single file.
  */
@@ -47,13 +60,12 @@ struct fio_file {
 	struct flist_head hash_list;
 	enum fio_filetype filetype;
 
-	/*
-	 * A file may not be a file descriptor, let the io engine decide
-	 */
-	union {
-		unsigned long file_data;
-		int fd;
-	};
+	void *file_data;
+	int fd;
+#ifdef WIN32
+	HANDLE hFile;
+	HANDLE ioCP;
+#endif
 
 	/*
 	 * filename and possible memory mapping
@@ -73,6 +85,7 @@ struct fio_file {
 	unsigned long long io_size;
 
 	unsigned long long last_pos;
+	unsigned long long last_start;
 
 	unsigned long long first_write;
 	unsigned long long last_write;
@@ -93,9 +106,10 @@ struct fio_file {
 	/*
 	 * block map for random io
 	 */
-	unsigned int *file_map;
-	unsigned int num_maps;
-	unsigned int last_free_lookup;
+	unsigned long *file_map;
+	unsigned long num_maps;
+	unsigned long last_free_lookup;
+	unsigned failed_rands;
 
 	int references;
 	enum fio_file_flags flags;
@@ -139,6 +153,7 @@ extern int __must_check generic_close_file(struct thread_data *, struct fio_file
 extern int __must_check generic_get_file_size(struct thread_data *, struct fio_file *);
 extern int __must_check pre_read_files(struct thread_data *);
 extern int add_file(struct thread_data *, const char *);
+extern int add_file_exclusive(struct thread_data *, const char *);
 extern void get_file(struct fio_file *);
 extern int __must_check put_file(struct thread_data *, struct fio_file *);
 extern void put_file_log(struct thread_data *, struct fio_file *);
@@ -154,10 +169,12 @@ extern void free_release_files(struct thread_data *);
 static inline void fio_file_reset(struct fio_file *f)
 {
 	f->last_free_lookup = 0;
+	f->failed_rands = 0;
 	f->last_pos = f->file_offset;
+	f->last_start = -1ULL;
 	f->file_pos = -1ULL;
 	if (f->file_map)
-		memset(f->file_map, 0, f->num_maps * sizeof(int));
+		memset(f->file_map, 0, f->num_maps * sizeof(unsigned long));
 }
 
 #endif

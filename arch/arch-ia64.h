@@ -1,7 +1,7 @@
 #ifndef ARCH_IA64_H
 #define ARCH_IA64_H
 
-#define ARCH	(arch_ia64)
+#define FIO_ARCH	(arch_ia64)
 
 #ifndef __NR_ioprio_set
 #define __NR_ioprio_set		1274
@@ -33,6 +33,16 @@ static inline unsigned long arch_ffz(unsigned long bitmask)
 {
 	return ia64_popcnt(bitmask & (~bitmask - 1));
 }
+
+static inline unsigned long get_cpu_clock(void)
+{
+	unsigned long ret;
+
+	__asm__ __volatile__("mov %0=ar.itc" : "=r" (ret) : : "memory");
+	return ret;
+}
+
 #define ARCH_HAVE_FFZ
+#define ARCH_HAVE_CPU_CLOCK
 
 #endif

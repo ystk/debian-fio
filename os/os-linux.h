@@ -1,9 +1,12 @@
 #ifndef FIO_OS_LINUX_H
 #define FIO_OS_LINUX_H
 
+#define	FIO_OS	os_linux
+
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <sys/syscall.h>
+#include <sys/vfs.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -11,8 +14,11 @@
 #include <linux/unistd.h>
 #include <linux/raw.h>
 #include <linux/major.h>
+#include <endian.h>
 
 #include "indirect.h"
+#include "binject.h"
+#include "../file.h"
 
 #define FIO_HAVE_LIBAIO
 #define FIO_HAVE_POSIXAIO
@@ -28,13 +34,32 @@
 #define FIO_HAVE_RAWBIND
 #define FIO_HAVE_BLKTRACE
 #define FIO_HAVE_STRSEP
-#define FIO_HAVE_FALLOCATE
 #define FIO_HAVE_POSIXAIO_FSYNC
 #define FIO_HAVE_PSHARED_MUTEX
 #define FIO_HAVE_CL_SIZE
 #define FIO_HAVE_CGROUPS
 #define FIO_HAVE_FDATASYNC
+#define FIO_HAVE_FS_STAT
+#define FIO_HAVE_TRIM
+#define FIO_HAVE_BINJECT
+#define FIO_HAVE_CLOCK_MONOTONIC
+#define FIO_HAVE_GETTID
+#define FIO_USE_GENERIC_INIT_RANDOM_STATE
+
+/*
+ * Can only enable this for newer glibcs, or the header and defines are
+ * missing
+ */
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 6
+#define FIO_HAVE_FALLOCATE
+#endif
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 8
+#define FIO_HAVE_LINUX_FALLOCATE
+#endif
+
+#ifdef SYNC_FILE_RANGE_WAIT_BEFORE
 #define FIO_HAVE_SYNC_FILE_RANGE
+#endif
 
 #define OS_MAP_ANON		MAP_ANONYMOUS
 
@@ -70,8 +95,8 @@ typedef struct drand48_data os_random_state_t;
 	sched_getaffinity((pid), (ptr))
 #endif
 
-#define fio_cpu_clear(mask, cpu)	CPU_CLR((cpu), (mask))
-#define fio_cpu_set(mask, cpu)		CPU_SET((cpu), (mask))
+#define fio_cpu_clear(mask, cpu)	(void) CPU_CLR((cpu), (mask))
+#define fio_cpu_set(mask, cpu)		(void) CPU_SET((cpu), (mask))
 
 static inline int fio_cpuset_init(os_cpu_mask_t *mask)
 {
@@ -89,6 +114,11 @@ static inline int fio_cpuset_exit(os_cpu_mask_t *mask)
 static inline int ioprio_set(int which, int who, int ioprio)
 {
 	return syscall(__NR_ioprio_set, which, who, ioprio);
+}
+
+static inline int gettid(void)
+{
+	return syscall(__NR_gettid);
 }
 
 /*
@@ -180,14 +210,18 @@ enum {
 #define BLKFLSBUF	_IO(0x12,97)
 #endif
 
-static inline int blockdev_invalidate_cache(int fd)
+#ifndef BLKDISCARD
+#define BLKDISCARD	_IO(0x12,119)
+#endif
+
+static inline int blockdev_invalidate_cache(struct fio_file *f)
 {
-	return ioctl(fd, BLKFLSBUF);
+	return ioctl(f->fd, BLKFLSBUF);
 }
 
-static inline int blockdev_size(int fd, unsigned long long *bytes)
+static inline int blockdev_size(struct fio_file *f, unsigned long long *bytes)
 {
-	if (!ioctl(fd, BLKGETSIZE64, bytes))
+	if (!ioctl(f->fd, BLKGETSIZE64, bytes))
 		return 0;
 
 	return errno;
@@ -258,6 +292,18 @@ static inline int fio_lookup_raw(dev_t dev, int *majdev, int *mindev)
 #define FIO_MADV_FREE	MADV_REMOVE
 #endif
 
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+#define FIO_LITTLE_ENDIAN
+#elif __BYTE_ORDER == __BIG_ENDIAN
+#define FIO_BIG_ENDIAN
+#else
+#error "Unknown endianness"
+#endif
+
+#define fio_swap16(x)	__bswap_16(x)
+#define fio_swap32(x)	__bswap_32(x)
+#define fio_swap64(x)	__bswap_64(x)
+
 #define CACHE_LINE_FILE	\
 	"/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size"
 
@@ -278,6 +324,33 @@ static inline int arch_cache_line_size(void)
 		return -1;
 	else
 		return atoi(size);
+}
+
+static inline unsigned long long get_fs_size(const char *path)
+{
+	unsigned long long ret;
+	struct statfs s;
+
+	if (statfs(path, &s) < 0)
+		return -1ULL;
+
+	ret = s.f_bsize;
+	ret *= (unsigned long long) s.f_bfree;
+	return ret;
+}
+
+static inline int os_trim(int fd, unsigned long long start,
+			  unsigned long long len)
+{
+	uint64_t range[2];
+
+	range[0] = start;
+	range[1] = len;
+
+	if (!ioctl(fd, BLKDISCARD, range))
+		return 0;
+
+	return errno;
 }
 
 #endif
