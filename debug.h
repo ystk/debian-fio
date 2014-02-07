@@ -17,6 +17,8 @@ enum {
 	FD_JOB,
 	FD_MUTEX,
 	FD_PROFILE,
+	FD_TIME,
+	FD_NET,
 	FD_DEBUG_MAX,
 };
 

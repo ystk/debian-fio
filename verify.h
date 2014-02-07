@@ -1,7 +1,9 @@
 #ifndef FIO_VERIFY_H
 #define FIO_VERIFY_H
 
-#define FIO_HDR_MAGIC	0xf00baaef
+#include <stdint.h>
+
+#define FIO_HDR_MAGIC	0xacca
 
 enum {
 	VERIFY_NONE = 0,		/* no verification */
@@ -16,6 +18,7 @@ enum {
 	VERIFY_SHA512,			/* sha512 sum data blocks */
 	VERIFY_META,			/* block_num, timestamp etc. */
 	VERIFY_SHA1,			/* sha1 sum data blocks */
+	VERIFY_PATTERN,			/* verify specific patterns */
 	VERIFY_NULL,			/* pretend to verify */
 };
 
@@ -25,13 +28,15 @@ enum {
  * data.
  */
 struct verify_header {
-	unsigned int fio_magic;
-	unsigned int len;
-	unsigned int verify_type;
+	uint16_t magic;
+	uint16_t verify_type;
+	uint32_t len;
+	uint64_t rand_seed;
+	uint32_t crc32;
 };
 
 struct vhdr_md5 {
-	uint32_t md5_digest[16];
+	uint32_t md5_digest[4];
 };
 struct vhdr_sha512 {
 	uint8_t sha512[128];
@@ -69,6 +74,7 @@ extern void populate_verify_io_u(struct thread_data *, struct io_u *);
 extern int __must_check get_next_verify(struct thread_data *td, struct io_u *);
 extern int __must_check verify_io_u(struct thread_data *, struct io_u *);
 extern int verify_io_u_async(struct thread_data *, struct io_u *);
+extern void fill_pattern(struct thread_data *td, void *p, unsigned int len, struct io_u *io_u, unsigned long seed, int use_seed);
 
 /*
  * Async verify offload

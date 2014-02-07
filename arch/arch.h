@@ -8,7 +8,7 @@
 #endif
 
 enum {
-	arch_x86_64,
+	arch_x86_64 = 1,
 	arch_i386,
 	arch_ppc,
 	arch_ia64,
@@ -21,6 +21,15 @@ enum {
 	arch_hppa,
 
 	arch_generic,
+
+	arch_nr,
+};
+
+enum {
+	ARCH_FLAG_1	= 1 << 0,
+	ARCH_FLAG_2	= 1 << 1,
+	ARCH_FLAG_3	= 1 << 2,
+	ARCH_FLAG_4	= 1 << 3,
 };
 
 #if defined(__i386__)
@@ -56,6 +65,13 @@ enum {
 #define ffz(bitmask)	arch_ffz(bitmask)
 #else
 #include "../lib/ffz.h"
+#endif
+
+#ifndef ARCH_HAVE_INIT
+static inline int arch_init(char *envp[])
+{
+	return 0;
+}
 #endif
 
 #endif

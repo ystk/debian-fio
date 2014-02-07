@@ -24,6 +24,23 @@ struct libaio_data {
 	int iocbs_nr;
 };
 
+struct libaio_options {
+	struct thread_data *td;
+	unsigned int userspace_reap;
+};
+
+static struct fio_option options[] = {
+	{
+		.name	= "userspace_reap",
+		.type	= FIO_OPT_STR_SET,
+		.off1	= offsetof(struct libaio_options, userspace_reap),
+		.help	= "Use alternative user-space reap implementation",
+	},
+	{
+		.name	= NULL,
+	},
+};
+
 static int fio_libaio_prep(struct thread_data fio_unused *td, struct io_u *io_u)
 {
 	struct fio_file *f = io_u->file;
@@ -34,8 +51,6 @@ static int fio_libaio_prep(struct thread_data fio_unused *td, struct io_u *io_u)
 		io_prep_pwrite(&io_u->iocb, f->fd, io_u->xfer_buf, io_u->xfer_buflen, io_u->offset);
 	else if (ddir_sync(io_u->ddir))
 		io_prep_fsync(&io_u->iocb, f->fd);
-	else
-		return 1;
 
 	return 0;
 }
@@ -60,26 +75,73 @@ static struct io_u *fio_libaio_event(struct thread_data *td, int event)
 	return io_u;
 }
 
+struct aio_ring {
+	unsigned id;		 /** kernel internal index number */
+	unsigned nr;		 /** number of io_events */
+	unsigned head;
+	unsigned tail;
+
+	unsigned magic;
+	unsigned compat_features;
+	unsigned incompat_features;
+	unsigned header_length;	/** size of aio_ring */
+
+	struct io_event events[0];
+};
+
+#define AIO_RING_MAGIC	0xa10a10a1
+
+static int user_io_getevents(io_context_t aio_ctx, unsigned int max,
+			     struct io_event *events)
+{
+	long i = 0;
+	unsigned head;
+	struct aio_ring *ring = (struct aio_ring*) aio_ctx;
+
+	while (i < max) {
+		head = ring->head;
+
+		if (head == ring->tail) {
+			/* There are no more completions */
+			break;
+		} else {
+			/* There is another completion to reap */
+			events[i] = ring->events[head];
+			read_barrier();
+			ring->head = (head + 1) % ring->nr;
+			i++;
+		}
+	}
+
+	return i;
+}
+
 static int fio_libaio_getevents(struct thread_data *td, unsigned int min,
 				unsigned int max, struct timespec *t)
 {
 	struct libaio_data *ld = td->io_ops->data;
-	int r;
+	struct libaio_options *o = td->eo;
+	unsigned actual_min = td->o.iodepth_batch_complete == 0 ? 0 : min;
+	int r, events = 0;
 
 	do {
-		r = io_getevents(ld->aio_ctx, min, max, ld->aio_events, t);
-		if (r >= (int) min)
-			break;
-		else if (r == -EAGAIN) {
+		if (o->userspace_reap == 1
+		    && actual_min == 0
+		    && ((struct aio_ring *)(ld->aio_ctx))->magic
+				== AIO_RING_MAGIC) {
+			r = user_io_getevents(ld->aio_ctx, max,
+				ld->aio_events + events);
+		} else {
+			r = io_getevents(ld->aio_ctx, actual_min,
+				max, ld->aio_events + events, t);
+		}
+		if (r >= 0)
+			events += r;
+		else if (r == -EAGAIN)
 			usleep(100);
-			continue;
-		} else if (r == -EINTR)
-			continue;
-		else if (r != 0)
-			break;
-	} while (1);
+	} while (events < min);
 
-	return r;
+	return r < 0 ? r : events;
 }
 
 static int fio_libaio_queue(struct thread_data *td, struct io_u *io_u)
@@ -102,6 +164,14 @@ static int fio_libaio_queue(struct thread_data *td, struct io_u *io_u)
 			return FIO_Q_BUSY;
 
 		do_io_u_sync(td, io_u);
+		return FIO_Q_COMPLETED;
+	}
+
+	if (io_u->ddir == DDIR_TRIM) {
+		if (ld->iocbs_nr)
+			return FIO_Q_BUSY;
+
+		do_io_u_trim(td, io_u);
 		return FIO_Q_COMPLETED;
 	}
 
@@ -210,19 +280,21 @@ static int fio_libaio_init(struct thread_data *td)
 }
 
 static struct ioengine_ops ioengine = {
-	.name		= "libaio",
-	.version	= FIO_IOOPS_VERSION,
-	.init		= fio_libaio_init,
-	.prep		= fio_libaio_prep,
-	.queue		= fio_libaio_queue,
-	.commit		= fio_libaio_commit,
-	.cancel		= fio_libaio_cancel,
-	.getevents	= fio_libaio_getevents,
-	.event		= fio_libaio_event,
-	.cleanup	= fio_libaio_cleanup,
-	.open_file	= generic_open_file,
-	.close_file	= generic_close_file,
-	.get_file_size	= generic_get_file_size,
+	.name			= "libaio",
+	.version		= FIO_IOOPS_VERSION,
+	.init			= fio_libaio_init,
+	.prep			= fio_libaio_prep,
+	.queue			= fio_libaio_queue,
+	.commit			= fio_libaio_commit,
+	.cancel			= fio_libaio_cancel,
+	.getevents		= fio_libaio_getevents,
+	.event			= fio_libaio_event,
+	.cleanup		= fio_libaio_cleanup,
+	.open_file		= generic_open_file,
+	.close_file		= generic_close_file,
+	.get_file_size		= generic_get_file_size,
+	.options		= options,
+	.option_struct_size	= sizeof(struct libaio_options),
 };
 
 #else /* FIO_HAVE_LIBAIO */
@@ -234,7 +306,7 @@ static struct ioengine_ops ioengine = {
  */
 static int fio_libaio_init(struct thread_data fio_unused *td)
 {
-	fprintf(stderr, "fio: libaio not available\n");
+	log_err("fio: libaio not available\n");
 	return 1;
 }
 

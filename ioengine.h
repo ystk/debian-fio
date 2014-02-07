@@ -1,13 +1,17 @@
 #ifndef FIO_IOENGINE_H
 #define FIO_IOENGINE_H
 
-#define FIO_IOOPS_VERSION	11
+#define FIO_IOOPS_VERSION	13
 
 enum {
 	IO_U_F_FREE		= 1 << 0,
 	IO_U_F_FLIGHT		= 1 << 1,
 	IO_U_F_FREE_DEF		= 1 << 2,
 	IO_U_F_IN_CUR_DEPTH	= 1 << 3,
+	IO_U_F_BUSY_OK		= 1 << 4,
+	IO_U_F_TRIMMED		= 1 << 5,
+	IO_U_F_BARRIER		= 1 << 6,
+	IO_U_F_VER_LIST		= 1 << 7,
 };
 
 /*
@@ -19,7 +23,7 @@ struct io_u {
 		struct iocb iocb;
 #endif
 #ifdef FIO_HAVE_POSIXAIO
-		struct aiocb aiocb;
+		os_aiocb_t aiocb;
 #endif
 #ifdef FIO_HAVE_SGIO
 		struct sg_io_hdr hdr;
@@ -29,6 +33,12 @@ struct io_u {
 #endif
 #ifdef FIO_HAVE_SOLARISAIO
 		aio_result_t resultp;
+#endif
+#ifdef FIO_HAVE_BINJECT
+		struct b_user_cmd buc;
+#endif
+#ifdef FIO_HAVE_RDMA
+		struct ibv_mr *mr;
 #endif
 		void *mmap_data;
 	};
@@ -43,11 +53,22 @@ struct io_u {
 	unsigned long long offset;
 
 	/*
+	 * Initial seed for generating the buffer contents
+	 */
+	unsigned long rand_seed;
+
+	/*
 	 * IO engine state, may be different from above when we get
 	 * partial transfers / residual data counts
 	 */
 	void *xfer_buf;
 	unsigned long xfer_buflen;
+
+	/*
+	 * Parameter related to pre-filled buffers and
+	 * their size to handle variable block sizes.
+	 */
+	unsigned long buf_filled_len;
 
 	unsigned int resid;
 	unsigned int error;
@@ -101,6 +122,8 @@ struct ioengine_ops {
 	int (*open_file)(struct thread_data *, struct fio_file *);
 	int (*close_file)(struct thread_data *, struct fio_file *);
 	int (*get_file_size)(struct thread_data *, struct fio_file *);
+	int option_struct_size;
+	struct fio_option *options;
 	void *data;
 	void *dlhandle;
 };
@@ -110,11 +133,13 @@ enum fio_ioengine_flags {
 	FIO_RAWIO	= 1 << 1,	/* some sort of direct/raw io */
 	FIO_DISKLESSIO	= 1 << 2,	/* no disk involved */
 	FIO_NOEXTEND	= 1 << 3,	/* engine can't extend file */
-	FIO_NODISKUTIL  = 1 << 4,       /* diskutil can't handle filename */
+	FIO_NODISKUTIL  = 1 << 4,	/* diskutil can't handle filename */
 	FIO_UNIDIR	= 1 << 5,	/* engine is uni-directional */
 	FIO_NOIO	= 1 << 6,	/* thread does only pseudo IO */
-	FIO_SIGQUIT	= 1 << 7,	/* needs SIGQUIT to exit */
+	FIO_SIGTERM	= 1 << 7,	/* needs SIGTERM to exit */
 	FIO_PIPEIO	= 1 << 8,	/* input/output no seekable */
+	FIO_BARRIER	= 1 << 9,	/* engine supports barriers */
+	FIO_MEMALIGN	= 1 << 10,	/* engine wants aligned memory */
 };
 
 /*
@@ -133,7 +158,10 @@ extern int __must_check td_io_get_file_size(struct thread_data *, struct fio_fil
 extern struct ioengine_ops *load_ioengine(struct thread_data *, const char *);
 extern void register_ioengine(struct ioengine_ops *);
 extern void unregister_ioengine(struct ioengine_ops *);
+extern void free_ioengine(struct thread_data *);
 extern void close_ioengine(struct thread_data *);
+
+extern int fio_show_ioengine_help(const char *engine);
 
 /*
  * io unit handling
@@ -149,11 +177,12 @@ extern int __must_check io_u_queued_complete(struct thread_data *, int, unsigned
 extern void io_u_queued(struct thread_data *, struct io_u *);
 extern void io_u_log_error(struct thread_data *, struct io_u *);
 extern void io_u_mark_depth(struct thread_data *, unsigned int);
-extern void io_u_fill_buffer(struct thread_data *td, struct io_u *, unsigned int);
+extern void io_u_fill_buffer(struct thread_data *td, struct io_u *, unsigned int, unsigned int);
 void io_u_mark_complete(struct thread_data *, unsigned int);
 void io_u_mark_submit(struct thread_data *, unsigned int);
 
 int do_io_u_sync(struct thread_data *, struct io_u *);
+int do_io_u_trim(struct thread_data *, struct io_u *);
 
 #ifdef FIO_INC_DEBUG
 static inline void dprint_io_u(struct io_u *io_u, const char *p)

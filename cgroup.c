@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mntent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include "fio.h"
 #include "flist.h"
 #include "cgroup.h"
@@ -14,12 +16,14 @@ static struct fio_mutex *lock;
 struct cgroup_member {
 	struct flist_head list;
 	char *root;
+	unsigned int cgroup_nodelete;
 };
 
 static char *find_cgroup_mnt(struct thread_data *td)
 {
 	char *mntpoint = NULL;
-	struct mntent *mnt;
+	struct mntent *mnt, dummy;
+	char buf[256] = {0};
 	FILE *f;
 
 	f = setmntent("/proc/mounts", "r");
@@ -28,7 +32,7 @@ static char *find_cgroup_mnt(struct thread_data *td)
 		return NULL;
 	}
 
-	while ((mnt = getmntent(f)) != NULL) {
+	while ((mnt = getmntent_r(f, &dummy, buf, sizeof(buf))) != NULL) {
 		if (!strcmp(mnt->mnt_type, "cgroup") &&
 		    strstr(mnt->mnt_opts, "blkio"))
 			break;
@@ -43,14 +47,16 @@ static char *find_cgroup_mnt(struct thread_data *td)
 	return mntpoint;
 }
 
-static void add_cgroup(const char *name, struct flist_head *clist)
+static void add_cgroup(struct thread_data *td, const char *name,
+			struct flist_head *clist)
 {
 	struct cgroup_member *cm;
 
 	cm = smalloc(sizeof(*cm));
 	INIT_FLIST_HEAD(&cm->list);
 	cm->root = smalloc_strdup(name);
-
+	if (td->o.cgroup_nodelete)
+		cm->cgroup_nodelete = 1;
 	fio_mutex_down(lock);
 	flist_add_tail(&cm->list, clist);
 	fio_mutex_up(lock);
@@ -65,7 +71,8 @@ void cgroup_kill(struct flist_head *clist)
 
 	flist_for_each_safe(n, tmp, clist) {
 		cm = flist_entry(n, struct cgroup_member, list);
-		rmdir(cm->root);
+		if (!cm->cgroup_nodelete)
+			rmdir(cm->root);
 		flist_del(&cm->list);
 		sfree(cm->root);
 		sfree(cm);
@@ -79,9 +86,9 @@ static char *get_cgroup_root(struct thread_data *td, char *mnt)
 	char *str = malloc(64);
 
 	if (td->o.cgroup)
-		sprintf(str, "%s/%s", mnt, td->o.cgroup);
+		sprintf(str, "%s%s%s", mnt, FIO_OS_PATH_SEPARATOR, td->o.cgroup);
 	else
-		sprintf(str, "%s/%s", mnt, td->o.name);
+		sprintf(str, "%s%s%s", mnt, FIO_OS_PATH_SEPARATOR, td->o.name);
 
 	return str;
 }
@@ -92,8 +99,8 @@ static int write_int_to_file(struct thread_data *td, const char *path,
 {
 	char tmp[256];
 	FILE *f;
-	
-	sprintf(tmp, "%s/%s", path, filename);
+
+	sprintf(tmp, "%s%s%s", path, FIO_OS_PATH_SEPARATOR, filename);
 	f = fopen(tmp, "w");
 	if (!f) {
 		td_verror(td, errno, onerr);
@@ -144,7 +151,7 @@ int cgroup_setup(struct thread_data *td, struct flist_head *clist, char **mnt)
 			goto err;
 		}
 	} else
-		add_cgroup(root, clist);
+		add_cgroup(td, root, clist);
 
 	if (td->o.cgroup_weight) {
 		if (write_int_to_file(td, root, "blkio.weight",

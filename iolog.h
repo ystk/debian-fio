@@ -1,16 +1,18 @@
 #ifndef FIO_IOLOG_H
 #define FIO_IOLOG_H
 
+#include "lib/ieee754.h"
+
 /*
  * Use for maintaining statistics
  */
 struct io_stat {
-	unsigned long max_val;
-	unsigned long min_val;
-	unsigned long samples;
+	uint64_t max_val;
+	uint64_t min_val;
+	uint64_t samples;
 
-	double mean;
-	double S;
+	fio_fp64_t mean;
+	fio_fp64_t S;
 };
 
 /*
@@ -27,9 +29,26 @@ struct io_sample {
  * Dynamically growing data sample log
  */
 struct io_log {
+	/*
+	 * Entries already logged
+	 */
 	unsigned long nr_samples;
 	unsigned long max_samples;
 	struct io_sample *log;
+
+	/*
+	 * Windowed average, for logging single entries average over some
+	 * period of time.
+	 */
+	struct io_stat avg_window[2];
+	unsigned long avg_msec;
+	unsigned long avg_last;
+};
+
+enum {
+	IP_F_ONRB	= 1,
+	IP_F_ONLIST	= 2,
+	IP_F_TRIMMED	= 4,
 };
 
 /*
@@ -40,12 +59,14 @@ struct io_piece {
 		struct rb_node rb_node;
 		struct flist_head list;
 	};
+	struct flist_head trim_list;
 	union {
 		int fileno;
 		struct fio_file *file;
 	};
 	unsigned long long offset;
 	unsigned long len;
+	unsigned int flags;
 	enum fio_ddir ddir;
 	union {
 		unsigned long delay;
@@ -75,22 +96,30 @@ extern void write_iolog_close(struct thread_data *);
 /*
  * Logging
  */
+extern void add_lat_sample(struct thread_data *, enum fio_ddir, unsigned long,
+				unsigned int);
 extern void add_clat_sample(struct thread_data *, enum fio_ddir, unsigned long,
 				unsigned int);
 extern void add_slat_sample(struct thread_data *, enum fio_ddir, unsigned long,
 				unsigned int);
 extern void add_bw_sample(struct thread_data *, enum fio_ddir, unsigned int,
 				struct timeval *);
-extern void show_run_stats(void);
+extern void add_iops_sample(struct thread_data *, enum fio_ddir, struct timeval *);
 extern void init_disk_util(struct thread_data *);
 extern void update_rusage_stat(struct thread_data *);
 extern void update_io_ticks(void);
-extern void setup_log(struct io_log **);
+extern void setup_log(struct io_log **, unsigned long);
 extern void finish_log(struct thread_data *, struct io_log *, const char *);
 extern void finish_log_named(struct thread_data *, struct io_log *, const char *, const char *);
 extern void __finish_log(struct io_log *, const char *);
 extern struct io_log *agg_io_log[2];
 extern int write_bw_log;
 extern void add_agg_sample(unsigned long, enum fio_ddir, unsigned int);
+
+static inline void init_ipo(struct io_piece *ipo)
+{
+	memset(ipo, 0, sizeof(*ipo));
+	INIT_FLIST_HEAD(&ipo->trim_list);
+}
 
 #endif

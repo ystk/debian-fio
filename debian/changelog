@@ -1,3 +1,95 @@
+fio (2.0.8-2) unstable; urgency=low
+
+  * debian/patches/ftbfs-fix-for-mips-architecture: 
+    Fixed build failure on mips and mipsel architectures. Sven Hoexter
+    suggested the fix and Jens Axboe confirmed it. Thanks.
+
+ -- Martin Steigerwald <ms@teamix.de>  Wed, 27 Jun 2012 09:25:49 +0200
+
+fio (2.0.8-1) unstable; urgency=low
+
+  [ Ritesh Raj Sarraf ]
+  * Fix Vcs-Browser URL.
+
+  [ Martin Steigerwald ]
+  * Imported Upstream version 2.0.7 which sports a client / server
+    architecture.
+  * debian/control: Updated to standards version 3.9.3.
+    No changes needed.
+  * debian/patches:
+    * makefile: Updated for fio 2.0.7 makefile.
+    * manpage: Removed, applied upstream.
+  * debian/copyright:
+    * Updated to 2012.
+    * Converted to machine readable format 1.0.
+  * Imported Upstream version 2.0.8
+  * patches/makefile-hardening and debian/rules: Changed to build
+    fio with hardening flags.
+
+ -- Martin Steigerwald <ms@teamix.de>  Tue, 26 Jun 2012 09:28:22 +0200
+
+fio (1.59-1) unstable; urgency=low
+
+  * Imported Upstream version 1.59.
+    - Added support for SuperH architecture (Closes: #561891).
+      Thanks to Nobuhiro Iwamatsu for the patch and build testing.
+  * debian/patches/manpage: Escape minus signs to fix lintian warning
+    I: fio: hyphen-used-as-minus-sign usr/share/man/man1/fio.1.gz:934
+  * New rdma engine in engines/rdma.c:
+    * debian/rules: Add variables for makefile to build new rdma engine.
+    * debian/control: Added build dependencies for new rdma engine.
+
+ -- Martin Steigerwald <ms@teamix.de>  Wed, 10 Oct 2011 17:19:00 +0200
+
+fio (1.57-1) unstable; urgency=low
+
+  * Imported Upstream version 1.57.
+  * Dropped manpage patch with manpage spelling fixes. Merged upstream.
+  * Implemented suggestions from Sebastian 'Tokkee' Harl. Thanks.
+    * Added -a to debhelper commands in architecture dependent sections
+      of the makefile.
+    * debian/copyright: Added authors of manpages for fio and
+      fio_generate_plots.
+    * debian/copyright: Added copyright hints for sha1.c, sha.h,
+      engines/windowsaio.c, lib/getopt_long.c, lib/rand.c.
+
+ -- Martin Steigerwald <ms@teamix.de>  Wed, 03 Aug 2011 14:05:33 +0200
+
+fio (1.55-1) UNRELEASED; urgency=low
+
+  * Corrected debian/watch file, thanks Ilya Barygin (Closes: #629174).
+  * Imported Upstream version 1.55.
+    * Includes commit e52947d15cf0d7d31c30ccdc43450a10081976da
+      that fixes build failure with --as-needed linker option
+      (Closes: #631690).
+  * Updated to Standards-Version to 3.9.2, no changes needed.
+  * debian/watch: Removed template to fix lintian warning
+    debian-watch-contains-dh_make-template.
+  * debian/rules: Added build-arch and build-indep as targets as
+    recommended by lintian 2.5.1 in order to prepare for a future
+    policy change.
+    * build-indep does nothing as there are no architecture
+      independent packages for now.
+
+ -- Martin Steigerwald <ms@teamix.de>  Mon, 27 Jun 2011 14:32:05 +0200
+
+fio (1.50-1) unstable; urgency=low
+
+  * Thanks for importing, Ritesh. Found my mistake with
+    help of Sebastian Harl. Thanks.
+  * New upstream version 1.5.0 (Closes: #613432).
+  * Updated to Standards-Version to 3.9.1, no changes needed.
+  * Patch to fix spelling errors in manpage. Forwarded upstream.
+  * Updated upstream copyright.
+
+ -- Martin Steigerwald <ms@teamix.de>  Wed, 16 Feb 2011 11:57:56 +0100
+
+fio (1.50-1~1.gbpa4517a) UNRELEASED; urgency=low
+
+  * Imported Upstream version 1.50.
+
+ -- Ritesh Raj Sarraf <rrs@debian.org>  Tue, 15 Feb 2011 19:19:14 +0530
+
 fio (1.38-1) unstable; urgency=low
 
   * New Upstream Version:

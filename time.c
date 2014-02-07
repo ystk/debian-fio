@@ -48,15 +48,12 @@ unsigned long mtime_since(struct timeval *s, struct timeval *e)
 		usec += 1000000;
 	}
 
+	if (sec < 0 || (sec == 0 && usec < 0))
+		return 0;
+
 	sec *= 1000UL;
 	usec /= 1000UL;
 	ret = sec + usec;
-
-	/*
-	 * time warp bug on some kernels?
-	 */
-	if (ret < 0)
-		ret = 0;
 
 	return ret;
 }
@@ -150,9 +147,11 @@ int ramp_time_over(struct thread_data *td)
 	return 0;
 }
 
-static void fio_init time_init(void)
+void fio_time_init(void)
 {
 	int i;
+
+	fio_clock_init();
 
 	/*
 	 * Check the granularity of the nanosleep function

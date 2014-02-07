@@ -3,20 +3,28 @@
  */
 
 #include <unistd.h>
+#include <math.h>
 #include <sys/time.h>
+#include <time.h>
 
 #include "fio.h"
 #include "smalloc.h"
 
 #include "hash.h"
 
-static int clock_gettime_works = 0;
+#ifdef ARCH_HAVE_CPU_CLOCK
+static unsigned long cycles_per_usec;
+static unsigned long last_cycles;
+#endif
 static struct timeval last_tv;
 static int last_tv_valid;
 
 static struct timeval *fio_tv;
 int fio_gtod_offload = 0;
 int fio_gtod_cpu = -1;
+static pthread_t gtod_thread;
+
+enum fio_cs fio_clock_source = FIO_PREFERRED_CLOCK_SOURCE;
 
 #ifdef FIO_DEBUG_TIME
 
@@ -124,19 +132,48 @@ void fio_gettime(struct timeval *tp, void fio_unused *caller)
 	if (fio_tv) {
 		memcpy(tp, fio_tv, sizeof(*tp));
 		return;
-	} else if (!clock_gettime_works) {
-gtod:
+	}
+
+	switch (fio_clock_source) {
+	case CS_GTOD:
 		gettimeofday(tp, NULL);
-	} else {
+		break;
+	case CS_CGETTIME: {
 		struct timespec ts;
 
+#ifdef FIO_HAVE_CLOCK_MONOTONIC
+		if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) {
+#else
 		if (clock_gettime(CLOCK_REALTIME, &ts) < 0) {
-			clock_gettime_works = 0;
-			goto gtod;
+#endif
+			log_err("fio: clock_gettime fails\n");
+			assert(0);
 		}
 
 		tp->tv_sec = ts.tv_sec;
 		tp->tv_usec = ts.tv_nsec / 1000;
+		break;
+		}
+#ifdef ARCH_HAVE_CPU_CLOCK
+	case CS_CPUCLOCK: {
+		unsigned long long usecs, t;
+
+		t = get_cpu_clock();
+		if (t < last_cycles) {
+			dprint(FD_TIME, "CPU clock going back in time\n");
+			t = last_cycles;
+		}
+
+		usecs = t / cycles_per_usec;
+		tp->tv_sec = usecs / 1000000;
+		tp->tv_usec = usecs % 1000000;
+		last_cycles = t;
+		break;
+		}
+#endif
+	default:
+		log_err("fio: invalid clock source %d\n", fio_clock_source);
+		break;
 	}
 
 	/*
@@ -154,13 +191,142 @@ gtod:
 	memcpy(&last_tv, tp, sizeof(*tp));
 }
 
+#ifdef ARCH_HAVE_CPU_CLOCK
+static unsigned long get_cycles_per_usec(void)
+{
+	struct timeval s, e;
+	unsigned long long c_s, c_e;
+
+	gettimeofday(&s, NULL);
+	c_s = get_cpu_clock();
+	do {
+		unsigned long long elapsed;
+
+		gettimeofday(&e, NULL);
+		elapsed = utime_since(&s, &e);
+		if (elapsed >= 10) {
+			c_e = get_cpu_clock();
+			break;
+		}
+	} while (1);
+
+	return c_e - c_s;
+}
+
+static void calibrate_cpu_clock(void)
+{
+	double delta, mean, S;
+	unsigned long avg, cycles[10];
+	int i, samples;
+
+	cycles[0] = get_cycles_per_usec();
+	S = delta = mean = 0.0;
+	for (i = 0; i < 10; i++) {
+		cycles[i] = get_cycles_per_usec();
+		delta = cycles[i] - mean;
+		if (delta) {
+			mean += delta / (i + 1.0);
+			S += delta * (cycles[i] - mean);
+		}
+	}
+
+	S = sqrt(S / (10 - 1.0));
+
+	samples = avg = 0;
+	for (i = 0; i < 10; i++) {
+		double this = cycles[i];
+
+		if ((fmax(this, mean) - fmin(this, mean)) > S)
+			continue;
+		samples++;
+		avg += this;
+	}
+
+	S /= 10.0;
+	mean /= 10.0;
+
+	for (i = 0; i < 10; i++)
+		dprint(FD_TIME, "cycles[%d]=%lu\n", i, cycles[i] / 10);
+
+	avg /= (samples * 10);
+	dprint(FD_TIME, "avg: %lu\n", avg);
+	dprint(FD_TIME, "mean=%f, S=%f\n", mean, S);
+
+	cycles_per_usec = avg;
+
+}
+#else
+static void calibrate_cpu_clock(void)
+{
+}
+#endif
+
+void fio_clock_init(void)
+{
+	last_tv_valid = 0;
+	calibrate_cpu_clock();
+}
+
 void fio_gtod_init(void)
 {
 	fio_tv = smalloc(sizeof(struct timeval));
 	assert(fio_tv);
 }
 
-void fio_gtod_update(void)
+static void fio_gtod_update(void)
 {
 	gettimeofday(fio_tv, NULL);
+}
+
+static void *gtod_thread_main(void *data)
+{
+	struct fio_mutex *mutex = data;
+
+	fio_mutex_up(mutex);
+
+	/*
+	 * As long as we have jobs around, update the clock. It would be nice
+	 * to have some way of NOT hammering that CPU with gettimeofday(),
+	 * but I'm not sure what to use outside of a simple CPU nop to relax
+	 * it - we don't want to lose precision.
+	 */
+	while (threads) {
+		fio_gtod_update();
+		nop;
+	}
+
+	return NULL;
+}
+
+int fio_start_gtod_thread(void)
+{
+	struct fio_mutex *mutex;
+	pthread_attr_t attr;
+	int ret;
+
+	mutex = fio_mutex_init(0);
+	if (!mutex)
+		return 1;
+
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, PTHREAD_STACK_MIN);
+	ret = pthread_create(&gtod_thread, &attr, gtod_thread_main, NULL);
+	pthread_attr_destroy(&attr);
+	if (ret) {
+		log_err("Can't create gtod thread: %s\n", strerror(ret));
+		goto err;
+	}
+
+	ret = pthread_detach(gtod_thread);
+	if (ret) {
+		log_err("Can't detatch gtod thread: %s\n", strerror(ret));
+		goto err;
+	}
+
+	dprint(FD_MUTEX, "wait on startup_mutex\n");
+	fio_mutex_down(mutex);
+	dprint(FD_MUTEX, "done waiting on startup_mutex\n");
+err:
+	fio_mutex_remove(mutex);
+	return ret;
 }

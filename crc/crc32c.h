@@ -20,12 +20,25 @@
 
 #include "../arch/arch.h"
 
-extern uint32_t crc32c(unsigned char const *, unsigned long);
+extern uint32_t crc32c_sw(unsigned char const *, unsigned long);
+extern int crc32c_intel_available;
 
-#ifdef ARCH_HAVE_SSE
+#ifdef ARCH_HAVE_SSE4_2
 extern uint32_t crc32c_intel(unsigned char const *, unsigned long);
+extern void crc32c_intel_probe(void);
 #else
-#define crc32c_intel crc32c
+#define crc32c_intel crc32c_sw
+static inline void crc32c_intel_probe(void)
+{
+}
 #endif
+
+static inline uint32_t fio_crc32c(unsigned char const *buf, unsigned long len)
+{
+	if (crc32c_intel_available)
+		return crc32c_intel(buf, len);
+
+	return crc32c_sw(buf, len);
+}
 
 #endif

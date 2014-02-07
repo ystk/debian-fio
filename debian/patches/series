@@ -1,1 +1,3 @@
-debian-changes-1.38-1
+ftbfs-fix-for-mips-architecture
+makefile
+makefile-hardening

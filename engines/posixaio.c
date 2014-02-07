@@ -56,7 +56,7 @@ static int fio_posixaio_cancel(struct thread_data fio_unused *td,
 	struct fio_file *f = io_u->file;
 	int r = aio_cancel(f->fd, &io_u->aiocb);
 
-	if (r == 1 || r == AIO_CANCELED)
+	if (r == AIO_ALLDONE || r == AIO_CANCELED)
 		return 0;
 
 	return 1;
@@ -65,13 +65,14 @@ static int fio_posixaio_cancel(struct thread_data fio_unused *td,
 static int fio_posixaio_prep(struct thread_data fio_unused *td,
 			     struct io_u *io_u)
 {
-	struct aiocb *aiocb = &io_u->aiocb;
+	os_aiocb_t *aiocb = &io_u->aiocb;
 	struct fio_file *f = io_u->file;
 
 	aiocb->aio_fildes = f->fd;
 	aiocb->aio_buf = io_u->xfer_buf;
 	aiocb->aio_nbytes = io_u->xfer_buflen;
 	aiocb->aio_offset = io_u->offset;
+	aiocb->aio_sigevent.sigev_notify = SIGEV_NONE;
 
 	io_u->seen = 0;
 	return 0;
@@ -83,7 +84,7 @@ static int fio_posixaio_getevents(struct thread_data *td, unsigned int min,
 				  unsigned int max, struct timespec *t)
 {
 	struct posixaio_data *pd = td->io_ops->data;
-	struct aiocb *suspend_list[SUSPEND_ENTRIES];
+	os_aiocb_t *suspend_list[SUSPEND_ENTRIES];
 	struct flist_head *entry;
 	struct timespec start;
 	int have_timeout = 0;
@@ -124,9 +125,6 @@ restart:
 			io_u->resid = io_u->xfer_buflen - retval;
 		} else
 			io_u->error = err;
-
-		if (r >= max)
-			break;
 	}
 
 	if (r >= min)
@@ -143,7 +141,7 @@ restart:
 	/*
 	 * must have some in-flight, wait for at least one
 	 */
-	aio_suspend((const struct aiocb * const *)suspend_list,
+	aio_suspend((const os_aiocb_t * const *)suspend_list,
 							suspend_entries, t);
 	goto restart;
 }
@@ -155,11 +153,11 @@ static struct io_u *fio_posixaio_event(struct thread_data *td, int event)
 	return pd->aio_events[event];
 }
 
-static int fio_posixaio_queue(struct thread_data fio_unused *td,
+static int fio_posixaio_queue(struct thread_data *td,
 			      struct io_u *io_u)
 {
 	struct posixaio_data *pd = td->io_ops->data;
-	struct aiocb *aiocb = &io_u->aiocb;
+	os_aiocb_t *aiocb = &io_u->aiocb;
 	int ret;
 
 	fio_ro_check(td, io_u);
@@ -168,7 +166,13 @@ static int fio_posixaio_queue(struct thread_data fio_unused *td,
 		ret = aio_read(aiocb);
 	else if (io_u->ddir == DDIR_WRITE)
 		ret = aio_write(aiocb);
-	else {
+	else if (io_u->ddir == DDIR_TRIM) {
+		if (pd->queued)
+			return FIO_Q_BUSY;
+
+		do_io_u_trim(td, io_u);
+		return FIO_Q_COMPLETED;
+	} else {
 #ifdef FIO_HAVE_POSIXAIO_FSYNC
 		ret = aio_fsync(O_SYNC, aiocb);
 #else
@@ -181,6 +185,15 @@ static int fio_posixaio_queue(struct thread_data fio_unused *td,
 	}
 		
 	if (ret) {
+		/*
+		 * At least OSX has a very low limit on the number of pending
+		 * IOs, so if it returns EAGAIN, we are out of resources
+		 * to queue more. Just return FIO_Q_BUSY to naturally
+		 * drop off at this depth.
+		 */
+		if (errno == EAGAIN)
+			return FIO_Q_BUSY;
+
 		io_u->error = errno;
 		td_verror(td, io_u->error, "xfer");
 		return FIO_Q_COMPLETED;
@@ -236,7 +249,7 @@ static struct ioengine_ops ioengine = {
  */
 static int fio_posixaio_init(struct thread_data fio_unused *td)
 {
-	fprintf(stderr, "fio: posixaio not available\n");
+	log_err("fio: posixaio not available\n");
 	return 1;
 }
 

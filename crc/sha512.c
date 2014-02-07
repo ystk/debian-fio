@@ -146,7 +146,7 @@ static void sha512_transform(uint64_t *state, uint64_t *W, const uint8_t *input)
 	a = b = c = d = e = f = g = h = t1 = t2 = 0;
 }
 
-void sha512_init(struct sha512_ctx *sctx)
+void fio_sha512_init(struct fio_sha512_ctx *sctx)
 {
 	sctx->state[0] = H0;
 	sctx->state[1] = H1;
@@ -159,13 +159,13 @@ void sha512_init(struct sha512_ctx *sctx)
 	sctx->count[0] = sctx->count[1] = sctx->count[2] = sctx->count[3] = 0;
 }
 
-void sha512_update(struct sha512_ctx *sctx, const uint8_t *data,
-		   unsigned int len)
+void fio_sha512_update(struct fio_sha512_ctx *sctx, const uint8_t *data,
+		       unsigned int len)
 {
-	unsigned int i, index, part_len;
+	unsigned int i, idx, part_len;
 
 	/* Compute number of bytes mod 128 */
-	index = (unsigned int)((sctx->count[0] >> 3) & 0x7F);
+	idx = (unsigned int)((sctx->count[0] >> 3) & 0x7F);
 	
 	/* Update number of bits */
 	if ((sctx->count[0] += (len << 3)) < (len << 3)) {
@@ -175,23 +175,23 @@ void sha512_update(struct sha512_ctx *sctx, const uint8_t *data,
 		sctx->count[1] += (len >> 29);
 	}
 	
-        part_len = 128 - index;
+        part_len = 128 - idx;
 	
 	/* Transform as many times as possible. */
 	if (len >= part_len) {
-		memcpy(&sctx->buf[index], data, part_len);
+		memcpy(&sctx->buf[idx], data, part_len);
 		sha512_transform(sctx->state, sctx->W, sctx->buf);
 
 		for (i = part_len; i + 127 < len; i+=128)
 			sha512_transform(sctx->state, sctx->W, &data[i]);
 
-		index = 0;
+		idx = 0;
 	} else {
 		i = 0;
 	}
 
 	/* Buffer remaining input */
-	memcpy(&sctx->buf[index], &data[i], len - i);
+	memcpy(&sctx->buf[idx], &data[i], len - i);
 
 	/* erase our data */
 	memset(sctx->W, 0, sizeof(sctx->W));
