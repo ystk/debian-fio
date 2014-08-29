@@ -13,14 +13,24 @@
 #define __must_check
 #endif
 
-#define uninitialized_var(x) x = x
+/*
+ * Mark unused variables passed to ops functions as unused, to silence gcc
+ */
+#define fio_unused	__attribute__((__unused__))
+#define fio_init	__attribute__((constructor))
+#define fio_exit	__attribute__((destructor))
 
-#ifndef _weak
-#ifndef __CYGWIN__
-#define _weak	__attribute__((weak))
-#else
-#define _weak
-#endif
-#endif
+#define fio_unlikely(x)	__builtin_expect(!!(x), 0)
+
+/*
+ * Check at compile time that something is of a particular type.
+ * Always evaluates to 1 so you may use it easily in comparisons.
+ */
+#define typecheck(type,x) \
+({	type __dummy; \
+	typeof(x) __dummy2; \
+	(void)(&__dummy == &__dummy2); \
+	1; \
+})
 
 #endif

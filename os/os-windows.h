@@ -7,6 +7,7 @@
 #include <sys/shm.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <psapi.h>
 #include <stdlib.h>
@@ -14,15 +15,18 @@
 #include "../smalloc.h"
 #include "../file.h"
 #include "../log.h"
+#include "../lib/hweight.h"
+
+#include "windows/posix.h"
+
+#ifndef PTHREAD_STACK_MIN
+#define PTHREAD_STACK_MIN 65535
+#endif
 
 #define FIO_HAVE_ODIRECT
 #define FIO_HAVE_CPU_AFFINITY
 #define FIO_HAVE_CHARDEV_SIZE
-#define FIO_HAVE_FDATASYNC
-#define FIO_HAVE_WINDOWSAIO
-#define FIO_HAVE_FALLOCATE
 #define FIO_HAVE_GETTID
-#define FIO_HAVE_CLOCK_MONOTONIC
 #define FIO_USE_GENERIC_RAND
 
 #define FIO_PREFERRED_ENGINE		"windowsaio"
@@ -31,23 +35,13 @@
 
 #define FIO_MAX_CPUS	MAXIMUM_PROCESSORS
 
-#define FIO_OS_HAVE_SOCKLEN_T
-typedef int fio_socklen_t;
-
 #define OS_MAP_ANON		MAP_ANON
 
-#define FIO_LITTLE_ENDIAN
 #define fio_swap16(x)	_byteswap_ushort(x)
 #define fio_swap32(x)	_byteswap_ulong(x)
 #define fio_swap64(x)	_byteswap_uint64(x)
 
-typedef off_t off64_t;
-typedef int clockid_t;
-
 typedef DWORD_PTR os_cpu_mask_t;
-
-#define CLOCK_REALTIME	1
-#define CLOCK_MONOTONIC	2
 
 #define _SC_PAGESIZE			0x1
 #define _SC_NPROCESSORS_ONLN	0x2
@@ -83,6 +77,7 @@ typedef DWORD_PTR os_cpu_mask_t;
 
 #define SIGCONT	0
 #define SIGUSR1	1
+#define SIGUSR2 2
 
 typedef int sigset_t;
 typedef int siginfo_t;
@@ -95,7 +90,6 @@ struct sigaction
 	void* (*sa_sigaction)(int, siginfo_t *, void*);
 };
 
-char *strsep(char **stringp, const char *delim);
 long sysconf(int name);
 
 int kill(pid_t pid, int sig);
@@ -121,6 +115,8 @@ static inline int blockdev_size(struct fio_file *f, unsigned long long *bytes)
 {
 	int rc = 0;
 	HANDLE hFile;
+	GET_LENGTH_INFORMATION info;
+	DWORD outBytes;
 
 	if (f->hFile == NULL) {
 		hFile = CreateFile(f->file_name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -129,10 +125,6 @@ static inline int blockdev_size(struct fio_file *f, unsigned long long *bytes)
 		hFile = f->hFile;
 	}
 
-	GET_LENGTH_INFORMATION info;
-	DWORD outBytes;
-	LARGE_INTEGER size;
-	size.QuadPart = 0;
 	if (DeviceIoControl(hFile, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &info, sizeof(info), &outBytes, NULL))
 		*bytes = info.Length.QuadPart;
 	else
@@ -160,17 +152,14 @@ static inline int blockdev_invalidate_cache(struct fio_file *f)
 
 static inline unsigned long long os_phys_mem(void)
 {
-	SYSTEM_INFO sysInfo;
-	uintptr_t addr;
+	long pagesize, pages;
 
-	GetSystemInfo(&sysInfo);
-	addr = (uintptr_t)sysInfo.lpMaximumApplicationAddress;
-	return (unsigned long long)addr;
-}
+	pagesize = sysconf(_SC_PAGESIZE);
+	pages = sysconf(_SC_PHYS_PAGES);
+	if (pages == -1 || pagesize == -1)
+		return 0;
 
-static inline void os_get_tmpdir(char *path, int len)
-{
-	GetTempPath(len, path);
+	return (unsigned long long) pages * (unsigned long long) pagesize;
 }
 
 static inline int gettid(void)
@@ -186,7 +175,12 @@ static inline int fio_setaffinity(int pid, os_cpu_mask_t cpumask)
 	h = OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_INFORMATION, TRUE, pid);
 	if (h != NULL) {
 		bSuccess = SetThreadAffinityMask(h, cpumask);
+		if (!bSuccess)
+			log_err("fio_setaffinity failed: failed to set thread affinity (pid %d, mask %.16llx)\n", pid, cpumask);
+
 		CloseHandle(h);
+	} else {
+		log_err("fio_setaffinity failed: failed to get handle for pid %d\n", pid);
 	}
 
 	return (bSuccess)? 0 : -1;
@@ -213,7 +207,17 @@ static inline void fio_cpu_clear(os_cpu_mask_t *mask, int cpu)
 
 static inline void fio_cpu_set(os_cpu_mask_t *mask, int cpu)
 {
-	*mask |= 1 << (cpu-1);
+	*mask |= 1 << cpu;
+}
+
+static inline int fio_cpu_isset(os_cpu_mask_t *mask, int cpu)
+{
+	return (*mask & (1U << cpu));
+}
+
+static inline int fio_cpu_count(os_cpu_mask_t *mask)
+{
+	return hweight64(*mask);
 }
 
 static inline int fio_cpuset_init(os_cpu_mask_t *mask)
@@ -248,6 +252,13 @@ static inline int init_random_state(struct thread_data *td, unsigned long *rand_
 	CryptReleaseContext(hCryptProv, 0);
 	td_fill_rand_seeds(td);
 	return 0;
+}
+
+
+static inline int fio_set_sched_idle(void)
+{
+	/* SetThreadPriority returns nonzero for success */
+	return (SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE))? 0 : -1;
 }
 
 

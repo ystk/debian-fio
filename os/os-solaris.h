@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <malloc.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/pset.h>
@@ -14,12 +15,8 @@
 
 #include "../file.h"
 
-#define FIO_HAVE_POSIXAIO
-#define FIO_HAVE_SOLARISAIO
-#define FIO_HAVE_POSIXAIO_FSYNC
 #define FIO_HAVE_CPU_AFFINITY
 #define FIO_HAVE_PSHARED_MUTEX
-#define FIO_HAVE_FDATASYNC
 #define FIO_HAVE_CHARDEV_SIZE
 #define FIO_USE_GENERIC_BDEV_SIZE
 #define FIO_USE_GENERIC_INIT_RANDOM_STATE
@@ -27,12 +24,6 @@
 
 #define OS_MAP_ANON		MAP_ANON
 #define OS_RAND_MAX		2147483648UL
-
-#if defined(_BIG_ENDIAN)
-#define FIO_BIG_ENDIAN
-#else
-#define FIO_LITTLE_ENDIAN
-#endif
 
 #define fio_swap16(x)	BSWAP_16(x)
 #define fio_swap32(x)	BSWAP_32(x)
@@ -48,6 +39,9 @@ struct solaris_rand_seed {
 #define POSIX_MADV_DONTNEED	MADV_DONTNEED
 #define POSIX_MADV_RANDOM	MADV_RANDOM
 #endif
+
+#define os_ctime_r(x, y, z)     ctime_r((x), (y), (z))
+#define FIO_OS_HAS_CTIME_R
 
 typedef psetid_t os_cpu_mask_t;
 typedef struct solaris_rand_seed os_random_state_t;
@@ -109,6 +103,42 @@ static inline int fio_set_odirect(int fd)
 
 #define fio_cpu_clear(mask, cpu)	pset_assign(PS_NONE, (cpu), NULL)
 #define fio_cpu_set(mask, cpu)		pset_assign(*(mask), (cpu), NULL)
+
+static inline int fio_cpu_isset(os_cpu_mask_t *mask, int cpu)
+{
+	const unsigned int max_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	unsigned int num_cpus;
+	processorid_t *cpus;
+	int i, ret;
+
+	cpus = malloc(sizeof(*cpus) * max_cpus);
+
+	if (pset_info(*mask, NULL, &num_cpus, cpus) < 0) {
+		free(cpus);
+		return 0;
+	}
+
+	ret = 0;
+	for (i = 0; i < num_cpus; i++) {
+		if (cpus[i] == cpu) {
+			ret = 1;
+			break;
+		}
+	}
+
+	free(cpus);
+	return ret;
+}
+
+static inline int fio_cpu_count(os_cpu_mask_t *mask)
+{
+	unsigned int num_cpus;
+
+	if (pset_info(*mask, NULL, &num_cpus, NULL) < 0)
+		return 0;
+
+	return num_cpus;
+}
 
 static inline int fio_cpuset_init(os_cpu_mask_t *mask)
 {

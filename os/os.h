@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#include "../arch/arch.h"
+
 enum {
 	os_linux = 1,
 	os_aix,
@@ -15,16 +17,22 @@ enum {
 	os_hpux,
 	os_mac,
 	os_netbsd,
+	os_openbsd,
 	os_solaris,
 	os_windows,
+	os_android,
 
 	os_nr,
 };
 
-#if defined(__linux__)
+#if defined(__ANDROID__)
+#include "os-android.h"
+#elif defined(__linux__)
 #include "os-linux.h"
 #elif defined(__FreeBSD__)
 #include "os-freebsd.h"
+#elif defined(__OpenBSD__)
+#include "os-openbsd.h"
 #elif defined(__NetBSD__)
 #include "os-netbsd.h"
 #elif defined(__sun__)
@@ -41,11 +49,7 @@ enum {
 #error "unsupported os"
 #endif
 
-#ifdef FIO_HAVE_LIBAIO
-#include <libaio.h>
-#endif
-
-#ifdef FIO_HAVE_POSIXAIO
+#ifdef CONFIG_POSIXAIO
 #include <aio.h>
 #ifndef FIO_OS_HAVE_AIOCB_TYPEDEF
 typedef struct aiocb os_aiocb_t;
@@ -57,7 +61,7 @@ typedef struct aiocb os_aiocb_t;
 #include <scsi/sg.h>
 #endif
 
-#ifndef FIO_HAVE_STRSEP
+#ifndef CONFIG_STRSEP
 #include "../lib/strsep.h"
 #endif
 
@@ -65,26 +69,25 @@ typedef struct aiocb os_aiocb_t;
 #define OS_MSG_DONTWAIT	MSG_DONTWAIT
 #endif
 
-#ifndef FIO_HAVE_FADVISE
-#define posix_fadvise(fd, off, len, advice)	(0)
-
 #ifndef POSIX_FADV_DONTNEED
 #define POSIX_FADV_DONTNEED	(0)
 #define POSIX_FADV_SEQUENTIAL	(0)
 #define POSIX_FADV_RANDOM	(0)
 #endif
-#endif /* FIO_HAVE_FADVISE */
 
 #ifndef FIO_HAVE_CPU_AFFINITY
 #define fio_setaffinity(pid, mask)	(0)
 #define fio_getaffinity(pid, mask)	do { } while (0)
 #define fio_cpu_clear(mask, cpu)	do { } while (0)
 #define fio_cpuset_exit(mask)		(-1)
+#define fio_cpus_split(mask, cpu)	(0)
 typedef unsigned long os_cpu_mask_t;
+#else
+extern int fio_cpus_split(os_cpu_mask_t *mask, unsigned int cpu);
 #endif
 
 #ifndef FIO_HAVE_IOPRIO
-#define ioprio_set(which, who, prio)	(0)
+#define ioprio_set(which, who, prioclass, prio)	(0)
 #endif
 
 #ifndef FIO_HAVE_ODIRECT
@@ -93,8 +96,15 @@ typedef unsigned long os_cpu_mask_t;
 #define OS_O_DIRECT			O_DIRECT
 #endif
 
+#ifdef OS_O_ATOMIC
+#define FIO_O_ATOMIC			OS_O_ATOMIC
+#else
+#define FIO_O_ATOMIC			0
+#endif
+
 #ifndef FIO_HAVE_HUGETLB
 #define SHM_HUGETLB			0
+#define MAP_HUGETLB			0
 #ifndef FIO_HUGE_PAGE
 #define FIO_HUGE_PAGE			0
 #endif
@@ -104,18 +114,16 @@ typedef unsigned long os_cpu_mask_t;
 #endif
 #endif
 
+#ifndef FIO_HAVE_MMAP_HUGE
+#define MAP_HUGETLB			0
+#endif
+
 #ifndef FIO_O_NOATIME
 #define FIO_O_NOATIME			0
 #endif
 
 #ifndef OS_RAND_MAX
 #define OS_RAND_MAX			RAND_MAX
-#endif
-
-#ifdef FIO_HAVE_CLOCK_MONOTONIC
-#define FIO_TIMER_CLOCK CLOCK_MONOTONIC
-#else
-#define FIO_TIMER_CLOCK CLOCK_REALTIME
 #endif
 
 #ifndef FIO_HAVE_RAWBIND
@@ -131,15 +139,23 @@ typedef unsigned long os_cpu_mask_t;
 #endif
 
 #ifndef FIO_PREFERRED_CLOCK_SOURCE
+#ifdef CONFIG_CLOCK_GETTIME
 #define FIO_PREFERRED_CLOCK_SOURCE	CS_CGETTIME
+#else
+#define FIO_PREFERRED_CLOCK_SOURCE	CS_GTOD
+#endif
 #endif
 
 #ifndef FIO_MAX_JOBS
 #define FIO_MAX_JOBS		2048
 #endif
 
-#ifndef FIO_OS_HAVE_SOCKLEN_T
-typedef socklen_t fio_socklen_t;
+#ifndef CONFIG_SOCKLEN_T
+typedef unsigned int socklen_t;
+#endif
+
+#ifndef FIO_OS_HAS_CTIME_R
+#define os_ctime_r(x, y, z)     (void) ctime_r((x), (y))
 #endif
 
 #ifdef FIO_USE_GENERIC_SWAP
@@ -166,7 +182,8 @@ static inline uint64_t fio_swap64(uint64_t val)
 }
 #endif
 
-#ifdef FIO_LITTLE_ENDIAN
+#ifndef FIO_HAVE_BYTEORDER_FUNCS
+#ifdef CONFIG_LITTLE_ENDIAN
 #define __le16_to_cpu(x)		(x)
 #define __le32_to_cpu(x)		(x)
 #define __le64_to_cpu(x)		(x)
@@ -181,39 +198,44 @@ static inline uint64_t fio_swap64(uint64_t val)
 #define __cpu_to_le32(x)		fio_swap32(x)
 #define __cpu_to_le64(x)		fio_swap64(x)
 #endif
+#endif /* FIO_HAVE_BYTEORDER_FUNCS */
 
+#ifdef FIO_INTERNAL
 #define le16_to_cpu(val) ({			\
-	uint16_t *__val = &(val);		\
-	__le16_to_cpu(*__val);			\
+	typecheck(uint16_t, val);		\
+	__le16_to_cpu(val);			\
 })
 #define le32_to_cpu(val) ({			\
-	uint32_t *__val = &(val);		\
-	__le32_to_cpu(*__val);			\
+	typecheck(uint32_t, val);		\
+	__le32_to_cpu(val);			\
 })
 #define le64_to_cpu(val) ({			\
-	uint64_t *__val = &(val);		\
-	__le64_to_cpu(*__val);			\
+	typecheck(uint64_t, val);		\
+	__le64_to_cpu(val);			\
 })
+#endif
+
 #define cpu_to_le16(val) ({			\
-	uint16_t *__val = &(val);		\
-	__cpu_to_le16(*__val);			\
+	typecheck(uint16_t, val);		\
+	__cpu_to_le16(val);			\
 })
 #define cpu_to_le32(val) ({			\
-	uint32_t *__val = &(val);		\
-	__cpu_to_le32(*__val);			\
+	typecheck(uint32_t, val);		\
+	__cpu_to_le32(val);			\
 })
 #define cpu_to_le64(val) ({			\
-	uint64_t *__val = &(val);		\
-	__cpu_to_le64(*__val);			\
+	typecheck(uint64_t, val);		\
+	__cpu_to_le64(val);			\
 })
 
 #ifndef FIO_HAVE_BLKTRACE
-static inline int is_blktrace(const char *fname)
+static inline int is_blktrace(const char *fname, int *need_swap)
 {
 	return 0;
 }
 struct thread_data;
-static inline int load_blktrace(struct thread_data *td, const char *fname)
+static inline int load_blktrace(struct thread_data *td, const char *fname,
+				int need_swap)
 {
 	return 1;
 }
@@ -306,6 +328,22 @@ static inline unsigned int cpus_online(void)
 {
 	return sysconf(_SC_NPROCESSORS_ONLN);
 }
+#endif
+
+#ifndef CPU_COUNT
+#ifdef FIO_HAVE_CPU_AFFINITY
+static inline int CPU_COUNT(os_cpu_mask_t *mask)
+{
+	int max_cpus = cpus_online();
+	int nr_cpus, i;
+
+	for (i = 0, nr_cpus = 0; i < max_cpus; i++)
+		if (fio_cpu_isset(mask, i))
+			nr_cpus++;
+
+	return nr_cpus;
+}
+#endif
 #endif
 
 #ifndef FIO_HAVE_GETTID

@@ -9,6 +9,7 @@ Table of contents
 6. Normal output
 7. Terse output
 8. Trace file format
+9. CPU idleness profiling
 
 1.0 Overview and history
 ------------------------
@@ -61,7 +62,7 @@ bottom, it contains the following basic parameters:
 
 	Num threads	How many threads or processes should we spread
 			this workload over.
-	
+
 The above are the basic parameters defined for a workload, in addition
 there's a multitude of parameters that modify other aspects of how this
 job behaves.
@@ -80,7 +81,7 @@ $ fio job_file
 and it will start doing what the job_file tells it to do. You can give
 more than one job file on the command line, fio will serialize the running
 of those files. Internally that is the same as using the 'stonewall'
-parameter described the the parameter section.
+parameter described in the parameter section.
 
 If the job file contains only one job, you may as well just give the
 parameters on the command line. The command line parameters are identical
@@ -222,7 +223,8 @@ a string. The following types are used:
 str	String. This is a sequence of alpha characters.
 time	Integer with possible time suffix. In seconds unless otherwise
 	specified, use eg 10m for 10 minutes. Accepts s/m/h for seconds,
-	minutes, and hours.
+	minutes, and hours, and accepts 'ms' (or 'msec') for milliseconds,
+	and 'us' (or 'usec') for microseconds.
 int	SI integer. A whole number value, which may contain a suffix
 	describing the base of the number. Accepted suffixes are k/m/g/t/p,
 	meaning kilo, mega, giga, tera, and peta. The suffix is not case
@@ -260,7 +262,8 @@ description=str	Text description of the job. Doesn't do anything except
 		not parsed.
 
 directory=str	Prefix filenames with this directory. Used to place files
-		in a different location than "./".
+		in a different location than "./". See the 'filename' option
+		for escaping certain characters.
 
 filename=str	Fio normally makes up a filename based on the job name,
 		thread number, and file number. If you want to share
@@ -272,14 +275,43 @@ filename=str	Fio normally makes up a filename based on the job name,
 		can specify a number of files by separating the names with a
 		':' colon. So if you wanted a job to open /dev/sda and /dev/sdb
 		as the two working files, you would use
-		filename=/dev/sda:/dev/sdb. On Windows, disk devices are accessed
-		as \\.\PhysicalDrive0 for the first device, \\.\PhysicalDrive1
-		for the second etc.  If the wanted filename does need to 
-		include a colon, then escape that with a '\' character. 
-		For instance, if the filename is "/dev/dsk/foo@3,0:c", 
-		then you would use filename="/dev/dsk/foo@3,0\:c". 
-		'-' is a reserved name, meaning stdin or stdout. Which of the 
-		two depends on the read/write direction set.
+		filename=/dev/sda:/dev/sdb. On Windows, disk devices are
+		accessed as \\.\PhysicalDrive0 for the first device,
+		\\.\PhysicalDrive1 for the second etc. Note: Windows and
+		FreeBSD prevent write access to areas of the disk containing
+		in-use data (e.g. filesystems).
+		If the wanted filename does need to include a colon, then
+		escape that with a '\' character. For instance, if the filename
+		is "/dev/dsk/foo@3,0:c", then you would use
+		filename="/dev/dsk/foo@3,0\:c". '-' is a reserved name, meaning
+		stdin or stdout. Which of the two depends on the read/write
+		direction set.
+
+filename_format=str
+		If sharing multiple files between jobs, it is usually necessary
+		to  have fio generate the exact names that you want. By default,
+		fio will name a file based on the default file format
+		specification of jobname.jobnumber.filenumber. With this
+		option, that can be customized. Fio will recognize and replace
+		the following keywords in this string:
+
+		$jobname
+			The name of the worker thread or process.
+
+		$jobnum
+			The incremental number of the worker thread or
+			process.
+
+		$filenum
+			The incremental number of the file for that worker
+			thread or process.
+
+		To have dependent jobs share a set of files, this option can
+		be set to have fio generate filenames that are shared between
+		the two. For instance, if testfiles.$filenum is specified,
+		file number 4 for any job will be named testfiles.4. The
+		default of $jobname.$jobnum.$filenum will be used if
+		no other format specifier is given.
 
 opendir=str	Tell fio to recursively add any file it can find in this
 		directory and down the file system tree.
@@ -297,11 +329,6 @@ lockfile=str	Fio defaults to not locking any files before it does
 					readers may access the file at the
 					same time, but writes get exclusive
 					access.
-
-		The option may be post-fixed with a lock batch number. If
-		set, then each thread/process may do that amount of IOs to
-		the file before giving up the lock. Since lock acquisition is
-		expensive, batching the lock/unlocks will speed up IO.
 
 readwrite=str
 rw=str		Type of io pattern. Accepted values are:
@@ -350,8 +377,19 @@ kb_base=int	The base unit for a kilobyte. The defacto base is 2^10, 1024.
 		ten unit instead, for obvious reasons. Allow values are
 		1024 or 1000, with 1024 being the default.
 
+unified_rw_reporting=bool	Fio normally reports statistics on a per
+		data direction basis, meaning that read, write, and trim are
+		accounted and reported separately. If this option is set,
+		the fio will sum the results and report them as "mixed"
+		instead.
+
 randrepeat=bool	For random IO workloads, seed the generator in a predictable
 		way so that results are repeatable across repetitions.
+
+randseed=int	Seed the random number generators based on this seed value, to
+		be able to control what sequence of output is being generated.
+		If not set, the random sequence depends on the randrepeat
+		setting.
 
 use_os_rand=bool Fio can either use the random generator supplied by the OS
 		to generator random offsets, or it can use it's own internal
@@ -386,21 +424,35 @@ size=int	The total size of file io for this job. Fio will run until
 		Unless specific nrfiles and filesize options are given,
 		fio will divide this size between the available files
 		specified by the job. If not set, fio will use the full
-		size of the given files or devices. If the the files
-		do not exist, size must be given. It is also possible to
-		give size as a percentage between 1 and 100. If size=20%
-		is given, fio will use 20% of the full size of the given
+		size of the given files or devices. If the files do not
+		exist, size must be given. It is also possible to give
+		size as a percentage between 1 and 100. If size=20% is
+		given, fio will use 20% of the full size of the given
 		files or devices.
+
+io_limit=int	Normally fio operates within the region set by 'size', which
+		means that the 'size' option sets both the region and size of
+		IO to be performed. Sometimes that is not what you want. With
+		this option, it is possible to define just the amount of IO
+		that fio should do. For instance, if 'size' is set to 20G and
+		'io_limit' is set to 5G, fio will perform IO within the first
+		20G but exit when 5G have been done.
 
 filesize=int	Individual file sizes. May be a range, in which case fio
 		will select sizes for files at random within the given range
 		and limited to 'size' in total (if that is given). If not
 		given, each created file is the same size.
 
+file_append=bool	Perform IO after the end of the file. Normally fio will
+		operate within the size of a file. If this option is set, then
+		fio will append to the file instead. This has identical
+		behavior to setting offset to the size of a file. This option
+		is ignored on non-regular files.
+
 fill_device=bool
 fill_fs=bool	Sets size to something really large and waits for ENOSPC (no
 		space left on device) as the terminating condition. Only makes
-                sense with sequential write. For a read workload, the mount
+		sense with sequential write. For a read workload, the mount
 		point will be filled first then IO started on the result. This
 		option doesn't make sense if operating on a raw device node,
 		since the size of that is already known by the file system.
@@ -412,9 +464,11 @@ bs=int		The block size used for the io units. Defaults to 4k. Values
 		can be given for both read and writes. If a single int is
 		given, it will apply to both. If a second int is specified
 		after a comma, it will apply to writes only. In other words,
-		the format is either bs=read_and_write or bs=read,write.
-		bs=4k,8k will thus use 4k blocks for reads, and 8k blocks
-		for writes. If you only wish to set the write size, you
+		the format is either bs=read_and_write or bs=read,write,trim.
+		bs=4k,8k will thus use 4k blocks for reads, 8k blocks for
+		writes, and 8k for trims. You can terminate the list with
+		a trailing comma. bs=4k,8k, would use the default value for
+		trims.. If you only wish to set the write size, you
 		can do so by passing an empty read size - bs=,8k will set
 		8k for writes and leave the read default value.
 
@@ -472,8 +526,15 @@ bs_unaligned	If this option is given, any byte size value within bsrange
 		may be used as a block range. This typically wont work with
 		direct IO, as that normally requires sector alignment.
 
+bs_is_seq_rand	If this option is set, fio will use the normal read,write
+		blocksize settings as sequential,random instead. Any random
+		read or write will use the WRITE blocksize settings, and any
+		sequential read or write will use the READ blocksize setting.
+
 zero_buffers	If this option is given, fio will init the IO buffers to
 		all zeroes. The default is to fill them with random data.
+		The resulting IO buffers will not be completely zeroed,
+		unless scramble_buffers is also turned off.
 
 refill_buffers	If this option is given, fio will refill the IO buffers
 		on every submit. The default is to only fill it at init
@@ -503,6 +564,11 @@ buffer_compress_chunk=int	See buffer_compress_percentage. This
 		to some chunk size smaller than the block size, fio can
 		alternate random and zeroed data throughout the IO
 		buffer.
+
+buffer_pattern=str	If set, fio will fill the io buffers with this pattern.
+		If not set, the contents of io buffers is defined by the other
+		options related to buffer contents. The setting can be any
+		pattern of bytes, and can be prefixed with 0x for hex values.
 
 nrfiles=int	Number of files to use for this job. Defaults to 1.
 
@@ -536,6 +602,8 @@ ioengine=str	Defines how the job issues io to the file. The following
 			psync 	Basic pread(2) or pwrite(2) io.
 
 			vsync	Basic readv(2) or writev(2) IO.
+
+			psyncv	Basic preadv(2) or pwritev(2) IO.
 
 			libaio	Linux native asynchronous io. Note that Linux
 				may only support queued behaviour with
@@ -602,6 +670,16 @@ ioengine=str	Defines how the job issues io to the file. The following
 				channel semantics (Send/Recv) for the
 				InfiniBand, RoCE and iWARP protocols.
 
+			falloc   IO engine that does regular fallocate to
+				 simulate data transfer as fio ioengine.
+				 DDIR_READ  does fallocate(,mode = keep_size,)
+				 DDIR_WRITE does fallocate(,mode = 0)
+				 DDIR_TRIM  does fallocate(,mode = punch_hole)
+
+			e4defrag IO engine that does regular EXT4_IOC_MOVE_EXT
+				 ioctls to simulate defragment activity in
+				 request to DDIR_WRITE event
+
 			external Prefix to specify loading an external
 				IO engine object file. Append the engine
 				filename, eg ioengine=external:/tmp/foo.o
@@ -645,6 +723,11 @@ direct=bool	If value is true, use non-buffered io. This is usually
 		O_DIRECT. Note that ZFS on Solaris doesn't support direct io.
 		On Windows the synchronous ioengines don't support direct io.
 
+atomic=bool	If value is true, attempt to use atomic direct IO. Atomic
+		writes are guaranteed to be stable once acknowledged by
+		the operating system. Only Linux supports O_ATOMIC right
+		now.
+
 buffered=bool	If value is true, use buffered io. This is the opposite
 		of the 'direct' option. Defaults to true.
 
@@ -658,6 +741,13 @@ offset_increment=int	If this is provided, then the real offset becomes
 		for each job. This option is useful if there are several jobs
 		which are intended to operate on a file in parallel in disjoint
 		segments, with even spacing between the starting points.
+
+number_ios=int	Fio will normally perform IOs until it has exhausted the size
+		of the region set by size=, or if it exhaust the allocated
+		time (or hits an error condition). With this setting, the
+		range/size can be set independently of the number of IOs to
+		perform. When fio reaches this number, it will exit normally
+		and report status.
 
 fsync=int	If writing to a file, issue a sync of the dirty data
 		for every number of blocks given. For example, if you give
@@ -691,7 +781,7 @@ overwrite=bool	If true, writes to a file will always overwrite existing
 		and is large enough for the specified write phase, nothing
 		will be done.
 
-end_fsync=bool	If true, fsync file contents when the job exits.
+end_fsync=bool	If true, fsync file contents when a write stage has completed.
 
 fsync_on_close=bool	If true, fio will fsync() a dirty file on close.
 		This differs from end_fsync in that it will happen on every
@@ -706,6 +796,34 @@ rwmixwrite=int	How large a percentage of the mix should be writes. If both
 		if fio is asked to limit reads or writes to a certain rate.
 		If that is the case, then the distribution may be skewed.
 
+random_distribution=str:float	By default, fio will use a completely uniform
+		random distribution when asked to perform random IO. Sometimes
+		it is useful to skew the distribution in specific ways,
+		ensuring that some parts of the data is more hot than others.
+		fio includes the following distribution models:
+
+		random		Uniform random distribution
+		zipf		Zipf distribution
+		pareto		Pareto distribution
+
+		When using a zipf or pareto distribution, an input value
+		is also needed to define the access pattern. For zipf, this
+		is the zipf theta. For pareto, it's the pareto power. Fio
+		includes a test program, genzipf, that can be used visualize
+		what the given input values will yield in terms of hit rates.
+		If you wanted to use zipf with a theta of 1.2, you would use
+		random_distribution=zipf:1.2 as the option. If a non-uniform
+		model is used, fio will disable use of the random map.
+
+percentage_random=int	For a random workload, set how big a percentage should
+		be random. This defaults to 100%, in which case the workload
+		is fully random. It can be set from anywhere from 0 to 100.
+		Setting it to 0 would make the workload fully sequential. Any
+		setting in between will result in a random mix of sequential
+		and random IO, at the given percentages. It is possible to
+		set different values for reads, writes, and trim. To do so,
+		simply use a comma separated list. See blocksize.
+	
 norandommap	Normally fio will cover every block of the file when doing
 		random IO. If this option is given, fio will just get a
 		new random offset without looking at past io history. This
@@ -720,6 +838,23 @@ softrandommap=bool See norandommap. If fio runs with the random block map
 		set it will continue without a random block map. As coverage
 		will not be as complete as with random maps, this option is
 		disabled by default.
+
+random_generator=str	Fio supports the following engines for generating
+		IO offsets for random IO:
+
+		tausworthe	Strong 2^88 cycle random number generator
+		lfsr		Linear feedback shift register generator
+
+		Tausworthe is a strong random number generator, but it
+		requires tracking on the side if we want to ensure that
+		blocks are only read or written once. LFSR guarantees
+		that we never generate the same offset twice, and it's
+		also less computationally expensive. It's not a true
+		random generator, however, though for IO purposes it's
+		typically good enough. LFSR only works with single
+		block sizes, not with workloads that use multiple block
+		sizes. If used with such a workload, fio may read or write
+		some blocks multiple times.
 
 nice=int	Run the job with the given nice value. See man nice(2).
 
@@ -740,11 +875,15 @@ thinktime_spin=int
 		to sleeping for the rest of the period specified by
 		thinktime.
 
-thinktime_blocks
+thinktime_blocks=int
 		Only valid if thinktime is set - control how many blocks
 		to issue, before waiting 'thinktime' usecs. If not set,
 		defaults to 1 which will make fio wait 'thinktime' usecs
-		after every block.
+		after every block. This effectively makes any queue depth
+		setting redundant, since no more than 1 IO will be queued
+		before we have to complete it and do our thinktime. In
+		other words, this setting effectively caps the queue depth
+		if the latter is larger.
 
 rate=int	Cap the bandwidth used by this job. The number is in bytes/sec,
 		the normal suffix rules apply. You can use rate=500k to limit
@@ -764,11 +903,28 @@ rate_iops=int	Cap the bandwidth to this number of IOPS. Basically the same
 		as rate, just specified independently of bandwidth. If the
 		job is given a block size range instead of a fixed value,
 		the smallest block size is used as the metric. The same format
-		as rate is used for read vs write seperation.
+		as rate is used for read vs write separation.
 
 rate_iops_min=int If fio doesn't meet this rate of IO, it will cause
 		the job to exit. The same format as rate is used for read vs
-		write seperation.
+		write separation.
+
+latency_target=int	If set, fio will attempt to find the max performance
+		point that the given workload will run at while maintaining a
+		latency below this target. The values is given in microseconds.
+		See latency_window and latency_percentile
+
+latency_window=int	Used with latency_target to specify the sample window
+		that the job is run at varying queue depths to test the
+		performance. The value is given in microseconds.
+
+latency_percentile=float	The percentage of IOs that must fall within the
+		criteria specified by latency_target and latency_window. If not
+		set, this defaults to 100.0, meaning that all IOs must be equal
+		or below to the value set by latency_target.
+
+max_latency=int	If set, fio will exit the job if it exceeds this maximum
+		latency. It will exit with an ETIME error.
 
 ratecycle=int	Average bandwidth for 'rate' and 'ratemin' over this number
 		of milliseconds.
@@ -788,6 +944,34 @@ cpus_allowed=str Controls the same options as cpumask, but it allows a text
 		5, you would specify cpus_allowed=1,5. This options also
 		allows a range of CPUs. Say you wanted a binding to CPUs
 		1, 5, and 8-15, you would set cpus_allowed=1,5,8-15.
+
+cpus_allowed_policy=str Set the policy of how fio distributes the CPUs
+		specified by cpus_allowed or cpumask. Two policies are
+		supported:
+
+		shared	All jobs will share the CPU set specified.
+		split	Each job will get a unique CPU from the CPU set.
+
+		'shared' is the default behaviour, if the option isn't
+		specified. If split is specified, then fio will will assign
+		one cpu per job. If not enough CPUs are given for the jobs
+		listed, then fio will roundrobin the CPUs in the set.
+
+numa_cpu_nodes=str Set this job running on spcified NUMA nodes' CPUs. The
+		arguments allow comma delimited list of cpu numbers,
+		A-B ranges, or 'all'. Note, to enable numa options support,
+		fio must be built on a system with libnuma-dev(el) installed.
+
+numa_mem_policy=str Set this job's memory policy and corresponding NUMA
+		nodes. Format of the argements:
+			<mode>[:<nodelist>]
+		`mode' is one of the following memory policy:
+			default, prefer, bind, interleave, local
+		For `default' and `local' memory policy, no node is
+		needed to be specified.
+		For `prefer', only one node is allowed.
+		For `bind' and `interleave', it allow comma delimited
+		list of numbers, A-B ranges, or 'all'.
 
 startdelay=time	Start this job the specified number of seconds after fio
 		has started. Only useful if the job file contains several
@@ -914,6 +1098,13 @@ loops=int	Run the specified number of iterations of this job. Used
 		to repeat the same workload a given number of times. Defaults
 		to 1.
 
+verify_only	Do not perform specified workload---only verify data still
+		matches previous invocation of this workload. This option
+		allows one to check data multiple times at a later date
+		without overwriting it. This option makes sense only for
+		workloads that write data, and does not support workloads
+		with the time_based option set.
+
 do_verify=bool	Run the verify phase after a write phase. Only makes sense if
 		verify is set. Defaults to 1.
 
@@ -944,6 +1135,10 @@ verify=str	If writing to a file, fio can verify the file contents
 			crc7	Use a crc7 sum of the data area and store
 				it in the header of each block.
 
+			xxhash	Use xxhash as the checksum function. Generally
+				the fastest software checksum that fio
+				supports.
+
 			sha512	Use sha512 as the checksum function.
 
 			sha256	Use sha256 as the checksum function.
@@ -952,7 +1147,9 @@ verify=str	If writing to a file, fio can verify the file contents
 
 			meta	Write extra information about each io
 				(timestamp, block number etc.). The block
-				number is verified. See also verify_pattern.
+				number is verified. The io sequence number is
+				verified for workloads that write data.
+				See also verify_pattern.
 
 			null	Only pretend to verify. Useful for testing
 				internals with ioengine=null, not for much
@@ -1026,9 +1223,6 @@ verify_backlog=int	Fio will normally verify the written contents of a
 		holding this meta data. If this option is enabled, fio
 		will write only N blocks before verifying these blocks.
 
-		will verify the previously written blocks before continuing
-		to write new ones.
-
 verify_backlog_batch=int	Control how many blocks fio will verify
 		if verify_backlog is set. If not set, will default to
 		the value of verify_backlog (meaning the entire queue
@@ -1036,29 +1230,29 @@ verify_backlog_batch=int	Control how many blocks fio will verify
 		less than verify_backlog then not all blocks will be verified,
 		if verify_backlog_batch is larger than verify_backlog, some
 		blocks will be verified more than once.
-		
+
 stonewall
-wait_for_previous Wait for preceeding jobs in the job file to exit, before
+wait_for_previous Wait for preceding jobs in the job file to exit, before
 		starting this one. Can be used to insert serialization
 		points in the job file. A stone wall also implies starting
 		a new reporting group.
 
-new_group	Start a new reporting group. If this option isn't given,
-		jobs in a file will be part of the same reporting group
-		unless separated by a stone wall (or if it's a group
-		by itself, with the numjobs option).
+new_group	Start a new reporting group. See: group_reporting.
 
 numjobs=int	Create the specified number of clones of this job. May be
 		used to setup a larger number of threads/processes doing
-		the same thing. We regard that grouping of jobs as a
-		specific group.
+		the same thing. Each thread is reported separately; to see
+		statistics for all clones as a whole, use group_reporting in
+		conjunction with new_group.
 
-group_reporting	If 'numjobs' is set, it may be interesting to display
-		statistics for the group as a whole instead of for each
-		individual job. This is especially true of 'numjobs' is
-		large, looking at individual thread/process output quickly
-		becomes unwieldy. If 'group_reporting' is specified, fio
-		will show the final report per-group instead of per-job.
+group_reporting	It may sometimes be interesting to display statistics for
+		groups of jobs as a whole instead of for each individual job.
+		This is especially true if 'numjobs' is used; looking at
+		individual thread/process output quickly becomes unwieldy.
+		To see the final report per-group instead of per-job, use
+		'group_reporting'. Jobs in a file will be part of the same
+		reporting group, unless if separated by a stonewall, or by
+		using 'new_group'.
 
 thread		fio defaults to forking jobs, however if this option is
 		given, fio will use pthread_create(3) to create threads
@@ -1082,7 +1276,7 @@ read_iolog=str	Open an iolog with the specified file name and replay the
 		for how to capture such logging data. For blktrace replay,
 		the file needs to be turned into a blkparse binary data
 		file first (blkparse <device> -o /dev/null -d file_for_fio.bin).
-		
+
 replay_no_stall=int When replaying I/O with read_iolog the default behavior
 		is to attempt to respect the time stamps within the log and
 		replay them with the appropriate delay between IOPS.  By
@@ -1094,7 +1288,7 @@ replay_no_stall=int When replaying I/O with read_iolog the default behavior
 replay_redirect=str While replaying I/O patterns using read_iolog the
 		default behavior is to replay the IOPS onto the major/minor
 		device that each IOP was recorded from.  This is sometimes
-		undesireable because on a different machine those major/minor
+		undesirable because on a different machine those major/minor
 		numbers can map to a different device.  Changing hardware on
 		the same system can also result in a different major/minor
 		mapping.  Replay_redirect causes all IOPS to be replayed onto
@@ -1113,7 +1307,9 @@ write_bw_log=str If given, write a bandwidth log of the jobs in this job
 		jobs in their lifetime. The included fio_generate_plots
 		script uses gnuplot to turn these text files into nice
 		graphs. See write_lat_log for behaviour of given
-		filename. For this option, the suffix is _bw.log.
+		filename. For this option, the suffix is _bw.x.log, where
+		x is the index of the job (1..N, where N is the number of
+		jobs).
 
 write_lat_log=str Same as write_bw_log, except that this option stores io
 		submission, completion, and total latencies instead. If no
@@ -1123,17 +1319,16 @@ write_lat_log=str Same as write_bw_log, except that this option stores io
 
 		write_lat_log=foo
 
-		The actual log names will be foo_slat.log, foo_slat.log,
-		and foo_lat.log. This helps fio_generate_plot fine the logs
-		automatically.
-
-write_bw_log=str If given, write an IOPS log of the jobs in this job
-		file. See write_bw_log.
+		The actual log names will be foo_slat.x.log, foo_clat.x.log,
+		and foo_lat.x.log, where x is the index of the job (1..N,
+		where N is the number of jobs). This helps fio_generate_plot
+		fine the logs automatically.
 
 write_iops_log=str Same as write_bw_log, but writes IOPS. If no filename is
 		given with this option, the default filename of
-		"jobname_type.log" is used. Even if the filename is given,
-		fio will still append the type of log.
+		"jobname_type.x.log" is used,where x is the index of the job
+		(1..N, where N is the number of jobs). Even if the filename
+		is given, fio will still append the type of log.
 
 log_avg_msec=int By default, fio will log an entry in the iops, latency,
 		or bw log for every IO that completes. When writing to the
@@ -1142,24 +1337,44 @@ log_avg_msec=int By default, fio will log an entry in the iops, latency,
 		specified period of time, reducing the resolution of the log.
 		Defaults to 0.
 
+log_offset=int	If this is set, the iolog options will include the byte
+		offset for the IO entry as well as the other data values.
+
+log_compression=int	If this is set, fio will compress the IO logs as
+		it goes, to keep the memory footprint lower. When a log
+		reaches the specified size, that chunk is removed and
+		compressed in the background. Given that IO logs are
+		fairly highly compressible, this yields a nice memory
+		savings for longer runs. The downside is that the
+		compression will consume some background CPU cycles, so
+		it may impact the run. This, however, is also true if
+		the logging ends up consuming most of the system memory.
+		So pick your poison. The IO logs are saved normally at the
+		end of a run, by decompressing the chunks and storing them
+		in the specified log file. This feature depends on the
+		availability of zlib.
+
+log_store_compressed=bool	If set, and log_compression is also set,
+		fio will store the log files in a compressed format. They
+		can be decompressed with fio, using the --inflate-log
+		command line parameter. The files will be stored with a
+		.fz suffix.
+
 lockmem=int	Pin down the specified amount of memory with mlock(2). Can
 		potentially be used instead of removing memory or booting
 		with less memory to simulate a smaller amount of memory.
+		The amount specified is per worker.
 
 exec_prerun=str	Before running this job, issue the command specified
-		through system(3).
+		through system(3). Output is redirected in a file called
+		jobname.prerun.txt.
 
 exec_postrun=str After the job completes, issue the command specified
-		 though system(3).
+		 though system(3). Output is redirected in a file called
+		 jobname.postrun.txt.
 
 ioscheduler=str	Attempt to switch the device hosting the file to the specified
 		io scheduler before running.
-
-cpuload=int	If the job is a CPU cycle eater, attempt to use the specified
-		percentage of CPU cycles.
-
-cpuchunks=int	If the job is a CPU cycle eater, split the load into
-		cycles of the given time. In microseconds.
 
 disk_util=bool	Generate disk utilization statistics, if the platform
 		supports it. Defaults to on.
@@ -1191,6 +1406,22 @@ percentile_list=float_list Overwrite the default list of percentiles
 		--percentile_list=99.5:99.9 will cause fio to report
 		the values of completion latency below which 99.5% and
 		99.9% of the observed latencies fell, respectively.
+
+clocksource=str	Use the given clocksource as the base of timing. The
+		supported options are:
+
+			gettimeofday	gettimeofday(2)
+
+			clock_gettime	clock_gettime(2)
+
+			cpu		Internal CPU clock source
+
+		cpu is the preferred clocksource if it is reliable, as it
+		is very fast (and fio is heavy on time calls). Fio will
+		automatically use this clocksource if it's supported and
+		considered reliable on the system it is running on, unless
+		another clocksource is specifically set. For x86/x86-64 CPUs,
+		this means supporting TSC Invariant.
 
 gtod_reduce=bool Enable all of the gettimeofday() reducing options
 		(disable_clat, disable_slat, disable_bw) plus reduce
@@ -1237,6 +1468,19 @@ continue_on_error=str	Normally fio will exit the job on the first observed
 			0		Backward-compatible alias for 'none'.
 
 			1		Backward-compatible alias for 'all'.
+
+ignore_error=str Sometimes you want to ignore some errors during test
+		 in that case you can specify error list for each error type.
+		 ignore_error=READ_ERR_LIST,WRITE_ERR_LIST,VERIFY_ERR_LIST
+		 errors for given error type is separated with ':'. Error
+		 may be symbol ('ENOSPC', 'ENOMEM') or integer.
+		 Example:
+			ignore_error=EAGAIN,ENOSPC:122
+		 This option will ignore EAGAIN from READ, and ENOSPC and
+		 122(EDQUOT) from WRITE.
+
+error_dump=bool If set dump every error even if it is non fatal, true
+		by default. If disabled only fatal error will be dumped
 
 cgroup=str	Add job to this control group. If it doesn't exist, it will
 		be created. The system must have a mounted cgroup blkio
@@ -1291,13 +1535,32 @@ that defines them is selected.
 		enabled when polling for a minimum of 0 events (eg when
 		iodepth_batch_complete=0).
 
+[cpu] cpuload=int Attempt to use the specified percentage of CPU cycles.
+
+[cpu] cpuchunks=int Split the load into cycles of the given time. In
+		microseconds.
+
+[cpu] exit_on_io_done=bool Detect when IO threads are done, then exit.
+
 [netsplice] hostname=str
 [net] hostname=str The host name or IP address to use for TCP or UDP based IO.
 		If the job is a TCP listener or UDP reader, the hostname is not
-		used and must be omitted.
+		used and must be omitted unless it is a valid UDP multicast
+		address.
 
 [netsplice] port=int
 [net] port=int	The TCP or UDP port to bind to or connect to.
+
+[netsplice] interface=str
+[net] interface=str  The IP address of the network interface used to send or
+		receive UDP multicast
+
+[netsplice] ttl=int
+[net] ttl=int	Time-to-live value for outgoing UDP multicast packets.
+		Default: 1
+
+[netsplice] nodelay=bool
+[net] nodelay=bool	Set TCP_NODELAY on TCP connections.
 
 [netsplice] protocol=str
 [netsplice] proto=str
@@ -1305,7 +1568,9 @@ that defines them is selected.
 [net] proto=str	The network protocol to use. Accepted values are:
 
 			tcp	Transmission control protocol
-			udp	Unreliable datagram protocol
+			tcpv6	Transmission control protocol V6
+			udp	User datagram protocol
+			udpv6	User datagram protocol V6
 			unix	UNIX domain socket
 
 		When the protocol is TCP or UDP, the port must also be given,
@@ -1316,6 +1581,26 @@ that defines them is selected.
 [net] listen	For TCP network connections, tell fio to listen for incoming
 		connections rather than initiating an outgoing connection. The
 		hostname must be omitted if this option is used.
+[net] pingpong	Normaly a network writer will just continue writing data, and
+		a network reader will just consume packages. If pingpong=1
+		is set, a writer will send its normal payload to the reader,
+		then wait for the reader to send the same payload back. This
+		allows fio to measure network latencies. The submission
+		and completion latencies then measure local time spent
+		sending or receiving, and the completion latency measures
+		how long it took for the other end to receive and send back.
+		For UDP multicast traffic pingpong=1 should only be set for a
+		single reader when multiple readers are listening to the same
+		address.
+
+[e4defrag] donorname=str
+	        File will be used as a block donor(swap extents between files)
+[e4defrag] inplace=int
+		Configure donor file blocks allocation strategy
+		0(default): Preallocate donor's file on init
+		1 	  : allocate space immidietly inside defragment event,
+			    and free right after event
+
 
 
 6.0 Interpreting the output
@@ -1333,7 +1618,7 @@ Idle	Run
 ----    ---
 P		Thread setup, but not started.
 C		Thread created.
-I		Thread initialized, waiting.
+I		Thread initialized, waiting or generating necessary data.
 	p	Thread running pre-reading file(s).
 	R	Running, doing sequential reads.
 	r	Running, doing random reads.
@@ -1342,11 +1627,21 @@ I		Thread initialized, waiting.
 	M	Running, doing mixed sequential reads/writes.
 	m	Running, doing mixed random reads/writes.
 	F	Running, currently waiting for fsync()
+	f	Running, finishing up (writing IO logs, etc)
 	V	Running, doing verification of written data.
 E		Thread exited, not reaped by main thread yet.
 _		Thread reaped, or
 X		Thread reaped, exited with an error.
 K		Thread reaped, exited due to signal.
+
+Fio will condense the thread string as not to take up more space on the
+command line as is needed. For instance, if you have 10 readers and 10
+writers running, the output would look like this:
+
+Jobs: 20 (f=20): [R(10),W(10)] [4.0% done] [2103MB/0KB/0KB /s] [538K/0/0 iops] [eta 57m:36s]
+
+Fio will still maintain the ordering, though. So the above means that jobs
+1..10 are readers, and 11..20 are writers.
 
 The other values are fairly self explanatory - number of threads
 currently running and doing io, rate of io since last check (read speed
@@ -1455,6 +1750,9 @@ util=		The disk utilization. A value of 100% means we kept the disk
 
 It is also possible to get fio to dump the current output while it is
 running, without terminating the job. To do that, send fio the USR1 signal.
+You can also get regularly timed dumps by using the --status-interval
+parameter, or by creating a file in /tmp named fio-dump-status. If fio
+sees this file, it will unlink it and dump the current output status.
 
 
 7.0 Terse output
@@ -1499,9 +1797,9 @@ Split up, the format is as follows:
 			  Read merges, write merges,
 			  Read ticks, write ticks,
 			  Time spent in queue, disk utilization percentage
-	Additional Info (dependant on continue_on_error, default off): total # errors, first error code 
-	
-	Additional Info (dependant on description being set): Text description
+	Additional Info (dependent on continue_on_error, default off): total # errors, first error code
+
+	Additional Info (dependent on description being set): Text description
 
 Completion latency percentiles can be a grouping of up to 20 sets, so
 for the terse output fio writes all of them. Each field will look like this:
@@ -1516,7 +1814,7 @@ there will be a disk utilization section.
 
 8.0 Trace file format
 ---------------------
-There are two trace file format that you can encounter. The older (v1) format 
+There are two trace file format that you can encounter. The older (v1) format
 is unsupported since version 1.20-rc3 (March 2008). It will still be described
 below in case that you get an old trace and want to understand it.
 
@@ -1553,7 +1851,7 @@ filename action
 The filename is given as an absolute path. The action can be one of these:
 
 add          Add the given filename to the trace
-open         Open the file with the given filename. The filename has to have 
+open         Open the file with the given filename. The filename has to have
              been added with the add action before.
 close        Close the file with the given filename. The file has to have been
              opened before.
@@ -1564,7 +1862,7 @@ The file io action format:
 filename action offset length
 
 The filename is given as an absolute path, and has to have been added and opened
-before it can be used with this format. The offset and length are given in 
+before it can be used with this format. The offset and length are given in
 bytes. The action can be one of these:
 
 wait       Wait for 'offset' microseconds. Everything below 100 is discarded.
@@ -1573,3 +1871,18 @@ write      Write 'length' bytes beginning from 'offset'
 sync       fsync() the file
 datasync   fdatasync() the file
 trim       trim the given file from the given 'offset' for 'length' bytes
+
+
+9.0 CPU idleness profiling
+--------------------------
+In some cases, we want to understand CPU overhead in a test. For example,
+we test patches for the specific goodness of whether they reduce CPU usage.
+fio implements a balloon approach to create a thread per CPU that runs at
+idle priority, meaning that it only runs when nobody else needs the cpu.
+By measuring the amount of work completed by the thread, idleness of each
+CPU can be derived accordingly.
+
+An unit work is defined as touching a full page of unsigned characters. Mean
+and standard deviation of time to complete an unit work is reported in "unit
+work" section. Options can be chosen to report detailed percpu idleness or
+overall system idleness by aggregating percpu stats.
