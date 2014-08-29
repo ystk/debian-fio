@@ -7,19 +7,20 @@ Author: Martin Steigerwald <ms@teamix.de>
 ---
 --- a/Makefile
 +++ b/Makefile
-@@ -84,13 +84,13 @@
+@@ -200,14 +200,14 @@
+ else
+ 	INSTALL = install
  endif
- 
- INSTALL = install
 -prefix = /usr/local
 +prefix = /usr
  bindir = $(prefix)/bin
  
- ifeq ($(UNAME), Darwin)
+ ifeq ($(CONFIG_TARGET_OS), Darwin)
  mandir = /usr/share/man
+ sharedir = /usr/share/fio
  else
 -mandir = $(prefix)/man
 +mandir = $(prefix)/share/man
+ sharedir = $(prefix)/share/fio
  endif
  
- all: .depend $(PROGS) $(SCRIPTS) FORCE

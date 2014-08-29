@@ -1,3 +1,57 @@
+fio (2.1.11-1) unstable; urgency=medium
+
+  * dh_builddeb without -z9, so use xz, but do not set default level.
+  * Imported Upstream version 2.1.11.
+  * debian/patches:
+    - makefile-hardening: Adapted to new C++ build option.
+    - makefile-clean-delete-config-log-and-d-files: Deleted. Fixed upstream.
+    - makefile-rm-configlog: Added.
+  * debian/control: Updated to standards version 3.9.5.
+    No changes needed.
+
+ -- Martin Steigerwald <ms@teamix.de>  Mon, 21 Jul 2014 15:53:36 +0200
+
+fio (2.1.3-1) unstable; urgency=low
+
+  * Imported Upstream version 2.1.2.
+  * debian/patches:
+    * makefile:  Refreshed.
+    * makefile-hardening: Refreshed.
+    * fio_generate_plots-gnuplot: Removed. Applied upstream.
+  * debian/control: Add python dependency for tools/fio2gnuplot.py.
+  * Add as binary dependency instead. I think dh_python stuff is not required.
+  * Imported Upstream version 2.1.3.
+  * debian/patches:
+    - makefile-hardening: Refreshed.
+    - makefile-clean-delete-config-log-and-d-files: Refreshed.
+    - manpage-spelling: Removed. Applied upstream.
+    - fio2gnuplot-manpage: Added. Fix lintian tag manpage-section-mismatch.
+  * debian/source/options:
+    - Removed, let default setting decide which compression level to use.
+
+ -- Martin Steigerwald <ms@teamix.de>  Mon, 07 Oct 2013 11:53:41 +0200
+
+fio (2.1.1-1) unstable; urgency=low
+
+  * Imported Upstream version 2.1.1.
+  * debian/patches/ftbfs-fix-for-mips-architecture:
+    Dropped. Applied upstream.
+  * debian/patches/makefile-clean-delete-config-log-and-d-files:
+    Delete config.log and *.d files as leaving them behind make
+    repeated dpkg-buildpackage builds fail with:
+    dpkg-source: info: local changes detected, …
+  * debian/patches/manpage-spelling: Fix lintian tag
+    spelling-error-in-manpage.
+  * debian/control: Added build dependency zlib1g-dev as fio can use
+    zlib to compress client/server communication.
+  * Switched to xz compression. Saved almost 37 KiB on binary package.
+  * Updated to Standards-Version to 3.9.4, no changes needed. 
+  * debian/patches/fio_generate_plots-gnuplot:
+    Make test for gnuplot work with empty strings (Closes: #700580).
+    Thanks to Hervé Werner for providing bug report and fix.
+
+ -- Martin Steigerwald <ms@teamix.de>  Mon, 05 Aug 2013 16:47:21 +0200
+
 fio (2.0.8-2) unstable; urgency=low
 
   * debian/patches/ftbfs-fix-for-mips-architecture: 

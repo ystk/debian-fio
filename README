@@ -14,17 +14,28 @@ Source
 
 fio resides in a git repo, the canonical place is:
 
-git://git.kernel.dk/fio.git
+	git://git.kernel.dk/fio.git
 
-If you are inside a corporate firewall, git:// may not always work for
-you. In that case you can use the http protocol, path is the same:
+When inside a corporate firewall, git:// URL sometimes does not work.
+If git:// does not work, use the http protocol instead:
 
-http://git.kernel.dk/fio.git
+	http://git.kernel.dk/fio.git
 
-Snapshots are frequently generated and they include the git meta data as
-well. You can download them here:
+Snapshots are frequently generated and include the git meta data as well.
+Snapshots can download from:
 
-http://brick.kernel.dk/snaps/
+	http://brick.kernel.dk/snaps/
+
+There are also two official mirrors. Both of these are synced within
+an hour of commits landing at git.kernel.dk. So if the main repo is
+down for some reason, either one of those is safe to use:
+
+	git://git.kernel.org/pub/scm/linux/kernel/git/axboe/fio.git
+	https://git.kernel.org/pub/scm/linux/kernel/git/axboe/fio.git
+
+or
+
+	https://github.com/axboe/fio.git
 
 
 Binary packages
@@ -38,11 +49,6 @@ Ubuntu:
 Starting with Ubuntu 10.04 LTS (aka "Lucid Lynx"), fio packages are part
 of the Ubuntu "universe" repository.
 http://packages.ubuntu.com/search?keywords=fio
-
-SUSE:
-Pascal Bleser <guru@unixtech.be> has fio RPMs in his repository for SUSE
-variants, you can find them here:
-http://linux01.gwdg.de/~pbleser/rpm-navigation.php?cat=System/fio
 
 Red Hat, CentOS & Co:
 Dag Wieërs has RPMs for Red Hat related distros, find them here:
@@ -59,60 +65,79 @@ tool (http://www.opencsw.org/get-it/pkgutil/) and then install fio via
 
 Windows:
 Bruce Cran <bruce@cran.org.uk> has fio packages for Windows at
-http://www.bluestop.org/fio .
+http://www.bluestop.org/fio/ .
 
 
 Mailing list
 ------------
 
-There's a mailing list associated with fio. It's meant for general
-discussion, bug reporting, questions, and development - basically anything
-that has to do with fio. An automated mail detailing recent commits is
-automatically sent to the list at most daily. The list address is
-fio@vger.kernel.org, subscribe by sending an email to
-majordomo@vger.kernel.org with
+The fio project mailing list is meant for anything related to fio including
+general discussion, bug reporting, questions, and development.
 
-subscribe fio
+An automated mail detailing recent commits is automatically sent to the
+list at most daily. The list address is fio@vger.kernel.org, subscribe
+by sending an email to majordomo@vger.kernel.org with
+
+	subscribe fio
 
 in the body of the email. Archives can be found here:
 
-http://www.spinics.net/lists/fio/
+	http://www.spinics.net/lists/fio/
 
 and archives for the old list can be found here:
 
-http://maillist.kernel.dk/fio-devel/
+	http://maillist.kernel.dk/fio-devel/
 
 
 Building
 --------
 
-Just type 'make' and 'make install'.
+Just type 'configure', 'make' and 'make install'.
 
 Note that GNU make is required. On BSD it's available from devel/gmake;
 on Solaris it's in the SUNWgmake package. On platforms where GNU make
 isn't the default, type 'gmake' instead of 'make'.
 
-If your compile fails with an error like this:
+Configure will print the enabled options. Note that on Linux based
+platforms, the libaio development packages must be installed to use
+the libaio engine. Depending on distro, it is usually called
+libaio-devel or libaio-dev.
 
-    CC gettime.o
-In file included from fio.h:23,
-                 from gettime.c:8:
-os/os.h:15:20: error: libaio.h: No such file or directory
-In file included from gettime.c:8:
-fio.h:119: error: field 'iocb' has incomplete type
-make: *** [gettime.o] Error 1
+For gfio, gtk 2.18 (or newer), associated glib threads, and cairo are required
+to be installed.  gfio isn't built automatically and can be enabled
+with a --enable-gfio option to configure.
 
-Check that you have the libaio development package installed. On RPM
-based distros, it's typically called libaio-devel.
+To build FIO with a cross-compiler:
+ $ make clean
+ $ make CROSS_COMPILE=/path/to/toolchain/prefix
+Configure will attempt to determine the target platform automatically.
+
+It's possible to build fio for ESX as well, use the --esx switch to
+configure.
 
 
 Windows
 -------
 
-On Windows MinGW (http://www.mingw.org/) is required in order to
-build fio. To create an MSI installer package install WiX 3.6 from
-http://wix.sourceforge.net/releases/ and run dobuild.cmd from the
+On Windows, Cygwin (http://www.cygwin.com/) is required in order to
+build fio. To create an MSI installer package install WiX 3.8 from
+http://wixtoolset.org and run dobuild.cmd from the
 os/windows directory.
+
+How to compile fio on 64-bit Windows:
+
+ 1. Install Cygwin (http://www.cygwin.com/). Install 'make' and all
+    packages starting with 'mingw64-i686' and 'mingw64-x86_64'.
+ 2. Open the Cygwin Terminal.
+ 3. Go to the fio directory (source files).
+ 4. Run 'make clean && make -j'.
+
+To build fio on 32-bit Windows, run './configure --build-32bit-win' before 'make'.
+
+It's recommended that once built or installed, fio be run in a Command Prompt
+or other 'native' console such as console2, since there are known to be display
+and signal issues when running it under a Cygwin shell
+(see http://code.google.com/p/mintty/issues/detail?id=56 for details).
 
 
 Command line
@@ -120,14 +145,17 @@ Command line
 
 $ fio
 	--debug			Enable some debugging options (see below)
+	--parse-only		Parse options only, don't start any IO
 	--output		Write output to file
-	--timeout		Runtime in seconds
-	--latency-log		Generate per-job latency logs
+	--runtime		Runtime in seconds
 	--bandwidth-log		Generate per-job bandwidth logs
 	--minimal		Minimal (terse) output
+	--output-format=type	Output format (terse,json,normal)
+	--terse-version=type	Terse version output format (default 3, or 2 or 4).
 	--version		Print version info and exit
-	--terse-version=type	Terse version output format (default 3, or 2).
 	--help			Print this page
+	--cpuclock-test		Perform test/validation of CPU clock
+	--crctest[=test]	Test speed of checksum functions
 	--cmdhelp=cmd		Print command help, "all" for all of them
 	--enghelp=engine	Print ioengine help, or list available ioengines
 	--enghelp=engine,cmd	Print help for an ioengine cmd
@@ -136,36 +164,43 @@ $ fio
 				writes
 	--eta=when		When ETA estimate should be printed
 				May be "always", "never" or "auto"
+	--eta-newline=time	Force a new line for every 'time' period passed
+	--status-interval=t	Force full status dump every 't' period passed
 	--section=name		Only run specified section in job file.
 				Multiple sections can be specified.
-	--alloc-size=kb	Set smalloc pool to this size in kb (def 1024)
-	--warnings-fatal Fio parser warnings are fatal
+	--alloc-size=kb		Set smalloc pool to this size in kb (def 1024)
+	--warnings-fatal	Fio parser warnings are fatal
 	--max-jobs		Maximum number of threads/processes to support
 	--server=args		Start backend server. See Client/Server section.
 	--client=host		Connect to specified backend.
+	--idle-prof=option	Report cpu idleness on a system or percpu basis
+				(option=system,percpu) or run unit work
+				calibration only (option=calibrate).
+	--inflate-log=log	Inflate and output compressed log
 
 
 Any parameters following the options will be assumed to be job files,
-unless they match a job file parameter. You can add as many as you want,
-each job file will be regarded as a separate group and fio will stonewall
-its execution.
+unless they match a job file parameter. Multiple job files can be listed 
+and each job file will be regarded as a separate group. fio will stonewall
+execution between each group.
 
-The --readonly switch is an extra safety guard to prevent accidentally
-turning on a write setting when that is not desired. Fio will only write
-if rw=write/randwrite/rw/randrw is given, but this extra safety net can
-be used as an extra precaution. It will also enable a write check in the
-io engine core to prevent an accidental write due to a fio bug.
+The --readonly option is an extra safety guard to prevent users from
+accidentally starting a write workload when that is not desired.  Fio
+will only write if rw=write/randwrite/rw/randrw is given.  This extra
+safety net can be used as an extra precaution as --readonly will also
+enable a write check in the io engine core to prevent writes due to
+unknown user space bug(s).
 
-The debug switch allows adding options that trigger certain logging
-options in fio. Currently the options are:
+The --debug option triggers additional logging by fio.
+Currently, additional logging is available for:
 
 	process		Dump info related to processes
 	file		Dump info related to file actions
-	io			Dump info related to IO queuing
-	mem			Dump info related to memory allocations
+	io		Dump info related to IO queuing
+	mem		Dump info related to memory allocations
 	blktrace	Dump info related to blktrace setup
 	verify		Dump info related to IO verification
-	all			Enable all debug options
+	all		Enable all debug options
 	random		Dump info related to random offset generation
 	parse		Dump info related to option matching and parsing
 	diskutil	Dump info related to disk utilization updates
@@ -173,157 +208,63 @@ options in fio. Currently the options are:
 	mutex		Dump info only related to mutex up/down ops
 	profile		Dump info related to profile extensions
 	time		Dump info related to internal time keeping
+	net		Dump info related to networking connections
+	rate		Dump info related to IO rate switching
+	compress	Dump info related to log compress/decompress
 	? or help	Show available debug options.
 
-You can specify as many as you want, eg --debug=file,mem will enable
+One can specify multiple debug options: e.g. --debug=file,mem will enable
 file and memory debugging.
 
-The section switch is meant to make it easier to ship a bigger job file
-instead of several smaller ones. Say you define a job file with light,
-moderate, and heavy parts. Then you can ask fio to run the given part
-only by giving it a --section=heavy command line option. The section
-option only applies to job sections, the reserved 'global' section is
-always parsed and taken into account.
+The --section option allows one to combine related jobs into one file.
+E.g. one job file could define light, moderate, and heavy sections. Tell fio to
+run only the "heavy" section by giving --section=heavy command line option.
+One can also specify the "write" operations in one section and "verify"
+operation in another section.  The --section option only applies to job
+sections.  The reserved 'global' section is always parsed and used.
 
-Fio has an internal allocator for shared memory called smalloc. It
-allocates shared structures from this pool. The pool defaults to 1024k
-in size, and can grow to 128 pools. If running large jobs with randommap
-enabled it can run out of memory, in which case the --alloc-size switch
-is handy for starting with a larger pool size. The backing store is
-files in /tmp. Fio cleans up after itself, while it is running you
-may see .fio_smalloc.* files in /tmp.
+The --alloc-size switch allows one to use a larger pool size for smalloc.
+If running large jobs with randommap enabled, fio can run out of memory.
+Smalloc is an internal allocator for shared structures from a fixed size
+memory pool. The pool size defaults to 1024k and can grow to 128 pools.
+
+NOTE: While running .fio_smalloc.* backing store files are visible in /tmp.
 
 
 Job file
 --------
 
-See the HOWTO file for a more detailed description of parameters and what
-they mean. This file contains the terse version. You can describe big and
-complex setups with the command line, but generally it's a lot easier to
-just write a simple job file to describe the workload. The job file format
-is in the ini style format, as that is easy to read and write for the user.
+See the HOWTO file for a complete description of job file syntax and
+parameters.  The --cmdhelp option also lists all options. If used with
+an option argument, --cmdhelp will detail the given option.  The job file
+format is in the ini style format, as that is easy for the user to review
+and modify.
 
-The job file parameters are:
+This README contains the terse version. Job files can describe big and
+complex setups that are not possible with the command line.  Job files
+are a good practice even for simple jobs since the file provides an
+easily accessed record of the workload and can include comments.
 
-	name=x		Use 'x' as the identifier for this job.
-	description=x	'x' is a text description of the job.
-	directory=x	Use 'x' as the top level directory for storing files
-	filename=x	Force the use of 'x' as the filename for all files
-			in this thread. If not given, fio will make up
-			a suitable filename based on the thread and file
-			number.
-	rw=x		'x' may be: read, randread, write, randwrite,
-			rw (read-write mix), randrw (read-write random mix)
-	rwmixcycle=x	Base cycle for switching between read and write
-			in msecs.
-	rwmixread=x	'x' percentage of rw mix ios will be reads. If
-			rwmixwrite is also given, the last of the two will
-			 be used if they don't add up to 100%.
-	rwmixwrite=x	'x' percentage of rw mix ios will be writes. See
-			rwmixread.
-	rand_repeatable=x  The sequence of random io blocks can be repeatable
-			across runs, if 'x' is 1.
-	size=x		Set file size to x bytes (x string can include k/m/g)
-	ioengine=x	'x' may be: aio/libaio/linuxaio for Linux aio,
-			posixaio for POSIX aio, solarisaio for Solaris
-			native async IO, windowsaio for Windows native async IO,
-			sync for regular read/write io,
-			psync for regular pread/pwrite io, vsync for regular
-			readv/writev (with queuing emulation) mmap for mmap'ed
-			io, syslet-rw for syslet driven read/write, splice for
-			using splice/vmsplice, sg for direct SG_IO io, net
-			for network io, or cpuio for a cycler burner load. sg
-			only works on Linux on SCSI (or SCSI-like devices, such
-			as usb-storage or sata/libata driven) devices. Fio also
-			has a null io engine, which is mainly used for testing
-			fio itself.
-
-	iodepth=x	For async io, allow 'x' ios in flight
-	overwrite=x	If 'x', layout a write file first.
-	nrfiles=x	Spread io load over 'x' number of files per job,
-			if possible.
-	prio=x		Run io at prio X, 0-7 is the kernel allowed range
-	prioclass=x	Run io at prio class X
-	bs=x		Use 'x' for thread blocksize. May include k/m postfix.
-	bsrange=x-y	Mix thread block sizes randomly between x and y. May
-			also include k/m postfix.
-	direct=x	1 for direct IO, 0 for buffered IO
-	thinktime=x	"Think" x usec after each io
-	rate=x		Throttle rate to x KB/sec
-	ratemin=x	Quit if rate of x KB/sec can't be met
-	ratecycle=x	ratemin averaged over x msecs
-	cpumask=x	Only allow job to run on CPUs defined by mask.
-	cpus_allowed=x	Like 'cpumask', but allow text setting of CPU affinity.
-	fsync=x		If writing with buffered IO, fsync after every
-			'x' blocks have been written.
-	end_fsync=x	If 'x', run fsync() after end-of-job.
-	startdelay=x	Start this thread x seconds after startup
-	runtime=x	Terminate x seconds after startup. Can include a
-			normal time suffix if not given in seconds, such as
-			'm' for minutes, 'h' for hours, and 'd' for days.
-	offset=x	Start io at offset x (x string can include k/m/g)
-	invalidate=x	Invalidate page cache for file prior to doing io
-	sync=x		Use sync writes if x and writing buffered IO.
-	mem=x		If x == malloc, use malloc for buffers. If x == shm,
-			use shared memory for buffers. If x == mmap, use
-			anonymous mmap.
-	exitall		When one thread quits, terminate the others
-	bwavgtime=x	Average bandwidth stats over an x msec window.
-	create_serialize=x	If 'x', serialize file creation.
-	create_fsync=x	If 'x', run fsync() after file creation.
-	unlink		If set, unlink files when done.
-	loops=x		Run the job 'x' number of times.
-	verify=x	If 'x' == md5, use md5 for verifies. If 'x' == crc32,
-			use crc32 for verifies. md5 is 'safer', but crc32 is
-			a lot faster. Only makes sense for writing to a file.
-			For other types of checksumming, see HOWTO.
-	stonewall	Wait for preceeding jobs to end before running.
-	numjobs=x	Create 'x' similar entries for this job
-	thread		Use pthreads instead of forked jobs
-	zonesize=x
-	zoneskip=y	Zone options must be paired. If given, the job
-			will skip y bytes for every x read/written. This
-			can be used to gauge hard drive speed over the entire
-			platter, without reading everything. Both x/y can
-			include k/m/g suffix.
-	read_iolog=x	Open and read io pattern from file 'x'. The file format
-                        is described in the HOWTO.
-	write_iolog=x	Write an iolog to file 'x' in the same format as iolog.
-			The iolog options are exclusive, if both given the
-			read iolog will be performed.  Specify a separate file
-			for each job, otherwise the iologs will be interspersed
-			and the file may be corrupt.
-	write_bw_log	Write a bandwidth log.
-	write_lat_log	Write a latency log.
-	lockmem=x	Lock down x amount of memory on the machine, to
-			simulate a machine with less memory available. x can
-			include k/m/g suffix.
-	nice=x		Run job at given nice value.
-	exec_prerun=x	Run 'x' before job io is begun.
-	exec_postrun=x	Run 'x' after job io has finished.
-	ioscheduler=x	Use ioscheduler 'x' for this job.
-	cpuload=x	For a CPU io thread, percentage of CPU time to attempt
-			to burn.
-	cpuchunks=x	Split burn cycles into pieces of x usecs.
-
+See the examples/ directory for inspiration on how to write job files.  Note
+the copyright and license requirements currently apply to examples/ files.
 
 
 Client/server
 ------------
 
-Normally you would run fio as a stand-alone application on the machine
-where the IO workload should be generated. However, it is also possible to
-run the frontend and backend of fio separately. This makes it possible to
-have a fio server running on the machine(s) where the IO workload should
-be running, while controlling it from another machine.
+Normally fio is invoked as a stand-alone application on the machine
+where the IO workload should be generated. However, the frontend and
+backend of fio can be run separately. Ie the fio server can generate
+an IO workload on the "Device Under Test" while being controlled from
+another machine.
 
-To start the server, you would do:
+Start the server on the machine which has access to the storage DUT:
 
 fio --server=args
 
-on that machine, where args defines what fio listens to. The arguments
-are of the form 'type,hostname or IP,port'. 'type' is either 'ip' (or ip4)
-for TCP/IP v4, 'ip6' for TCP/IP v6, or 'sock' for a local unix domain socket.
+where args defines what fio listens to. The arguments are of the form
+'type,hostname or IP,port'. 'type' is either 'ip' (or ip4) for TCP/IP v4,
+'ip6' for TCP/IP v6, or 'sock' for a local unix domain socket.
 'hostname' is either a hostname or IP address, and 'port' is the port to
 listen to (only valid for TCP/IP, not a local socket). Some examples:
 
@@ -351,27 +292,27 @@ listen to (only valid for TCP/IP, not a local socket). Some examples:
 
    Start a fio server, listening on the local socket /tmp/fio.sock.
 
-When a server is running, you can connect to it from a client. The client
-is run with:
+Once a server is running, a "client" can connect to the fio server with:
 
-fio --local-args --client=server --remote-args <job file(s)>
+fio --local-args --client=<server> --remote-args <job file(s)>
 
-where --local-args are arguments that are local to the client where it is
+where --local-args are arguments for the client where it is
 running, 'server' is the connect string, and --remote-args and <job file(s)>
 are sent to the server. The 'server' string follows the same format as it
 does on the server side, to allow IP/hostname/socket and port strings.
-You can connect to multiple clients as well, to do that you could run:
 
-fio --client=server2 --client=server2 <job file(s)>
+Fio can connect to multiple servers this way:
+
+fio --client=<server1> <job file(s)> --client=<server2> <job file(s)>
 
 
 Platforms
 ---------
 
-Fio works on (at least) Linux, Solaris, AIX, HP-UX, OSX, NetBSD, Windows
-and FreeBSD.  Some features and/or options may only be available on some of
-the platforms, typically because those features only apply to that platform
-(like the solarisaio engine, or the splice engine on Linux).
+Fio works on (at least) Linux, Solaris, AIX, HP-UX, OSX, NetBSD, OpenBSD,
+Windows and FreeBSD.  Some features and/or options may only be available on
+some of the platforms, typically because those features only apply to that
+platform (like the solarisaio engine, or the splice engine on Linux).
 
 Some features are not available on FreeBSD/Solaris even if they could be
 implemented, I'd be happy to take patches for that. An example of that is
@@ -389,12 +330,12 @@ your mileage may vary. Sending me patches for other platforms is greatly
 appreciated. There's a lot of value in having the same test/benchmark tool
 available on all platforms.
 
-Note that POSIX aio is not enabled by default on AIX. If you get messages like:
+Note that POSIX aio is not enabled by default on AIX. Messages like these:
 
     Symbol resolution failed for /usr/lib/libc.a(posix_aio.o) because:
         Symbol _posix_kaio_rdwr (number 2) is not exported from dependent module /unix.
 
-you need to enable POSIX aio. Run the following commands as root:
+indicate one needs to enable POSIX aio. Run the following commands as root:
 
     # lsdev -C -l posix_aio0
         posix_aio0 Defined  Posix Asynchronous I/O
